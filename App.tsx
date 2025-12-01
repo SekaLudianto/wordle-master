@@ -1,5 +1,6 @@
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Settings, RefreshCw, Trophy, Globe, X, Radio, Link as LinkIcon, User, Layers, Users, LayoutGrid, AlertCircle, CheckCircle } from 'lucide-react';
+import { Settings, RefreshCw, Trophy, Globe, X, Radio, Link as LinkIcon, User, Layers, Users, LayoutGrid, AlertCircle, CheckCircle, KeyRound } from 'lucide-react';
 import { fetchDictionary, getRandomWord, isValidWord } from './services/wordService';
 import { tiktokService } from './services/tiktokConnector';
 import Grid from './components/Grid';
@@ -31,6 +32,7 @@ const App: React.FC = () => {
   
   // TikTok State
   const [tiktokUsername, setTiktokUsername] = useState('');
+  const [tiktokSessionId, setTiktokSessionId] = useState('');
   const [isConnected, setIsConnected] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<string>('Disconnected');
   const [recentJoins, setRecentJoins] = useState<(TikTokMemberEvent & { id: number })[]>([]);
@@ -62,9 +64,20 @@ const App: React.FC = () => {
   const addToast = (msg: string, type: 'default' | 'error' | 'success' = 'default') => {
     const id = Date.now();
     setToasts(prev => {
-      // Limit visible toasts to avoid clutter
-      const filtered = prev.length > 2 ? prev.slice(1) : prev;
-      return [...filtered, { id, message: msg, type }];
+      let currentToasts = prev;
+
+      // Logic: Jika tipe pesan adalah 'error', hapus semua pesan error sebelumnya
+      // agar hanya ada SATU pesan error yang tampil dalam satu waktu.
+      if (type === 'error') {
+        currentToasts = prev.filter(t => t.type !== 'error');
+      }
+
+      // Limit visible toasts to avoid clutter for non-error messages
+      if (currentToasts.length > 2) {
+        currentToasts = currentToasts.slice(1);
+      }
+      
+      return [...currentToasts, { id, message: msg, type }];
     });
     setTimeout(() => {
       setToasts(prev => prev.filter(t => t.id !== id));
@@ -176,7 +189,7 @@ const App: React.FC = () => {
          ? `Kata "${guessWord}" tidak ada di kamus!` 
          : `Kata "${guessWord}" tidak valid!`;
        
-       // Show red error toast
+       // Show red error toast (will replace existing error toast)
        addToast(invalidMsg, 'error');
 
        setTimeout(() => setShake(false), 500);
@@ -335,7 +348,12 @@ const App: React.FC = () => {
     tiktokService.onMember(onMember);
     tiktokService.onConnected(onConnected);
     tiktokService.onDisconnected(onDisconnected);
-    tiktokService.onError((err) => console.error("Socket error:", err));
+    tiktokService.onError((err) => {
+        console.error("Socket error:", err);
+        if(err.includes("websocket upgrade") || err.includes("sessionId")) {
+            addToast("Gagal koneksi: Butuh Session ID (Cek Settings)", "error");
+        }
+    });
 
     return () => {
       tiktokService.offChat(onChat);
@@ -348,7 +366,7 @@ const App: React.FC = () => {
   const handleConnect = (e: React.FormEvent) => {
     e.preventDefault();
     if (tiktokUsername) {
-      tiktokService.setUniqueId(tiktokUsername);
+      tiktokService.setUniqueId(tiktokUsername, tiktokSessionId);
       setShowConnect(false);
       addToast(`Connecting to @${tiktokUsername}...`);
     }
@@ -366,11 +384,14 @@ const App: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [initGame]);
 
+  // Generate range for letters (4 to 15)
+  const letterOptions = Array.from({ length: 12 }, (_, i) => i + 4);
+
   return (
     <div className="flex flex-col h-full w-full bg-background relative overflow-hidden">
       
       {/* --- FLOATING NOTIFICATIONS (JOIN) --- */}
-      <div className="absolute top-20 right-4 z-50 flex flex-col gap-2 pointer-events-none w-64 items-end">
+      <div className="absolute top-20 right-4 z-40 flex flex-col gap-2 pointer-events-none w-64 items-end">
         {recentJoins.map((joiner) => (
           <div 
             key={joiner.id} 
@@ -388,9 +409,29 @@ const App: React.FC = () => {
         ))}
       </div>
 
+      {/* --- TOAST NOTIFICATIONS (CENTERED) --- */}
+      <div className="absolute top-28 left-1/2 transform -translate-x-1/2 z-50 flex flex-col items-center gap-2 w-full max-w-sm pointer-events-none">
+        {toasts.map((toast) => (
+          <div 
+            key={toast.id}
+            className={`px-6 py-3 rounded-full font-bold shadow-2xl backdrop-blur-md animate-pop flex items-center gap-2 border ${
+              toast.type === 'error' 
+                ? 'bg-rose-500/90 text-white border-rose-400' 
+                : toast.type === 'success'
+                ? 'bg-emerald-500/90 text-white border-emerald-400'
+                : 'bg-zinc-800/90 text-white border-zinc-700'
+            }`}
+          >
+            {toast.type === 'error' && <AlertCircle size={18} />}
+            {toast.type === 'success' && <CheckCircle size={18} />}
+            <span className="text-sm tracking-wide text-center">{toast.message}</span>
+          </div>
+        ))}
+      </div>
+
       {/* --- PRAISE & WINNER OVERLAY (WON or LOST) --- */}
       {praise && (
-         <div className="absolute inset-0 z-40 flex flex-col items-center justify-center pointer-events-none bg-black/60 backdrop-blur-[6px] animate-fade-in gap-6 p-4">
+         <div className="absolute inset-0 z-50 flex flex-col items-center justify-center pointer-events-none bg-black/60 backdrop-blur-[6px] animate-fade-in gap-6 p-4">
              
              {/* CONTENT BASED ON GAME STATUS */}
              {gameStatus === GameStatus.WON ? (
@@ -487,175 +528,187 @@ const App: React.FC = () => {
         )}
       </main>
 
-      {/* --- MODALS --- */}
-      
-      {/* Settings Modal */}
+      {/* --- SETTINGS MODAL --- */}
       {showSettings && (
-        <div className="absolute inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
-          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-md shadow-2xl p-6 h-auto max-h-[85vh] overflow-y-auto">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-bold flex items-center gap-2">
-                <Settings className="text-indigo-500" /> Pengaturan
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="bg-zinc-900 w-full max-w-sm rounded-2xl border border-zinc-800 shadow-2xl overflow-hidden max-h-[85vh] flex flex-col">
+            <div className="p-4 border-b border-zinc-800 flex items-center justify-between bg-zinc-900/50 sticky top-0 z-10">
+              <h2 className="text-lg font-bold flex items-center gap-2">
+                <Settings size={20} className="text-indigo-400" />
+                Game Settings
               </h2>
-              <button onClick={() => setShowSettings(false)} className="text-zinc-500 hover:text-white">
-                <X size={24} />
+              <button onClick={() => setShowSettings(false)} className="p-1 hover:bg-zinc-800 rounded-full">
+                <X size={20} />
               </button>
             </div>
-
-            <div className="space-y-6">
+            
+            <div className="p-5 space-y-6 overflow-y-auto custom-scrollbar">
+              
               {/* Language */}
-              <div>
-                <label className="text-sm font-medium text-zinc-400 mb-3 block flex items-center gap-2">
-                  <Globe size={16} /> Bahasa / Language
+              <div className="space-y-3">
+                <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider flex items-center gap-2">
+                  <Globe size={14} /> Language
                 </label>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 gap-2">
                   {(['ID', 'EN'] as const).map((lang) => (
                     <button
                       key={lang}
-                      onClick={() => { setLanguage(lang); initGame(); }}
+                      onClick={() => setLanguage(lang)}
                       className={`
-                        p-3 rounded-xl border flex items-center justify-center gap-2 font-bold transition-all
+                        py-2.5 px-4 rounded-xl text-sm font-bold border-2 transition-all
                         ${language === lang 
-                          ? 'bg-indigo-600 border-indigo-500 text-white' 
-                          : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-zinc-700'}
+                          ? 'border-indigo-500 bg-indigo-500/10 text-indigo-400' 
+                          : 'border-zinc-800 bg-zinc-800/50 text-zinc-400 hover:border-zinc-700'}
                       `}
                     >
-                      {lang === 'ID' ? '🇮🇩 Indonesia' : '🇺🇸 English'}
+                      {lang === 'ID' ? '🇮🇩 Indonesia' : '🇬🇧 English'}
                     </button>
                   ))}
                 </div>
               </div>
 
               {/* Word Length */}
-              <div>
-                <label className="text-sm font-medium text-zinc-400 mb-3 block flex items-center gap-2">
-                   <Trophy size={16} /> Jumlah Huruf ({wordLength})
+              <div className="space-y-3">
+                <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider flex items-center gap-2">
+                  <Trophy size={14} /> Difficulty (Letters)
                 </label>
-                <input 
-                  type="range" 
-                  min="4" 
-                  max="8" 
-                  value={wordLength}
-                  onChange={(e) => { setWordLength(Number(e.target.value)); }}
-                  onMouseUp={initGame} 
-                  onTouchEnd={initGame}
-                  className="w-full h-2 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                />
-                <div className="flex justify-between text-xs text-zinc-500 mt-2 font-mono">
-                  <span>4</span><span>5</span><span>6</span><span>7</span><span>8</span>
+                <div className="grid grid-cols-4 gap-2">
+                  {letterOptions.map((len) => (
+                    <button
+                      key={len}
+                      onClick={() => setWordLength(len)}
+                      className={`
+                        h-10 rounded-lg text-sm font-bold border-2 transition-all
+                        ${wordLength === len 
+                          ? 'border-emerald-500 bg-emerald-500/10 text-emerald-400' 
+                          : 'border-zinc-800 bg-zinc-800/50 text-zinc-400 hover:border-zinc-700'}
+                      `}
+                    >
+                      {len}
+                    </button>
+                  ))}
                 </div>
               </div>
-
+              
               {/* Max Guesses (Rows) */}
-              <div>
-                <label className="text-sm font-medium text-zinc-400 mb-3 block flex items-center gap-2">
-                   <LayoutGrid size={16} /> Kesempatan Menebak ({maxGuesses})
+               <div className="space-y-3">
+                <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider flex items-center gap-2">
+                  <LayoutGrid size={14} /> Max Rounds (Rows)
                 </label>
-                <input 
-                  type="range" 
-                  min="3" 
-                  max="12" 
-                  value={maxGuesses}
-                  onChange={(e) => { setMaxGuesses(Number(e.target.value)); }}
-                  onMouseUp={initGame} 
-                  onTouchEnd={initGame}
-                  className="w-full h-2 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                />
-                <div className="flex justify-between text-xs text-zinc-500 mt-2 font-mono">
-                  <span>3</span><span>6</span><span>12</span>
+                <div className="flex items-center gap-4 bg-zinc-800/50 p-3 rounded-xl border border-zinc-800">
+                    <input 
+                      type="range" 
+                      min="1" 
+                      max="12" 
+                      value={maxGuesses} 
+                      onChange={(e) => setMaxGuesses(parseInt(e.target.value))}
+                      className="flex-1 accent-indigo-500 h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer"
+                    />
+                    <span className="text-indigo-400 font-bold w-6 text-center">{maxGuesses}</span>
                 </div>
               </div>
-
-               {/* Max Guesses Per User */}
-               <div>
-                <label className="text-sm font-medium text-zinc-400 mb-3 block flex items-center gap-2">
-                   <Users size={16} /> Batas Tebakan Per Orang
+              
+              {/* Max Guesses Per User */}
+               <div className="space-y-3">
+                <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider flex items-center gap-2">
+                  <Users size={14} /> Guesses Per User
                 </label>
-                <div className="flex items-center gap-4 bg-zinc-800 p-3 rounded-xl border border-zinc-700">
-                    <span className={`text-lg font-bold ${maxGuessesPerUser === 0 ? 'text-emerald-400' : 'text-white'}`}>
-                        {maxGuessesPerUser === 0 ? 'UNLIMITED' : maxGuessesPerUser}
-                    </span>
+                <div className="flex items-center gap-4 bg-zinc-800/50 p-3 rounded-xl border border-zinc-800">
                     <input 
-                        type="range" 
-                        min="0" 
-                        max="5" 
-                        value={maxGuessesPerUser}
-                        onChange={(e) => { setMaxGuessesPerUser(Number(e.target.value)); }}
-                        className="w-full h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                      type="range" 
+                      min="0" 
+                      max="5" 
+                      value={maxGuessesPerUser} 
+                      onChange={(e) => setMaxGuessesPerUser(parseInt(e.target.value))}
+                      className="flex-1 accent-rose-500 h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer"
                     />
+                    <span className="text-rose-400 font-bold w-16 text-right">
+                       {maxGuessesPerUser === 0 ? "∞" : maxGuessesPerUser}
+                    </span>
                 </div>
-                <p className="text-xs text-zinc-500 mt-2">
-                    0 = Tidak ada batas. 1 = Hanya satu tebakan per ronde.
-                </p>
+                <p className="text-[10px] text-zinc-500">Set 0 for unlimited guesses.</p>
               </div>
 
             </div>
-            
-            <div className="mt-8 pt-6 border-t border-zinc-800 text-center">
-               <p className="text-xs text-zinc-500">Changes apply immediately. Game will restart.</p>
+
+            <div className="p-4 border-t border-zinc-800 bg-zinc-900/50 sticky bottom-0 z-10">
+              <button 
+                onClick={() => {
+                  initGame();
+                  setShowSettings(false);
+                }}
+                className="w-full py-3 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white font-bold rounded-xl shadow-lg shadow-indigo-500/20 active:scale-[0.98] transition-all flex items-center justify-center gap-2"
+              >
+                <RefreshCw size={18} /> Apply & Restart Game
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Connect TikTok Modal */}
+      {/* --- CONNECT MODAL --- */}
       {showConnect && (
-        <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
-           <div className="bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-sm p-6 shadow-2xl">
-              <div className="flex justify-between items-center mb-6">
-                <h2 className="text-xl font-bold flex items-center gap-2 text-white">
-                  <LinkIcon className="text-emerald-500" /> Connect TikTok
-                </h2>
-                <button onClick={() => setShowConnect(false)} className="text-zinc-500 hover:text-white">
-                  <X size={24} />
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="bg-zinc-900 w-full max-w-sm rounded-2xl border border-zinc-800 shadow-2xl p-6">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                <LinkIcon size={24} className="text-emerald-500" />
+                Connect TikTok
+              </h2>
+              <button onClick={() => setShowConnect(false)} className="text-zinc-500 hover:text-white">
+                <X size={24} />
+              </button>
+            </div>
+
+            <form onSubmit={handleConnect} className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-zinc-400 ml-1">TikTok Username</label>
+                <div className="relative">
+                  <User className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" size={18} />
+                  <input
+                    type="text"
+                    value={tiktokUsername}
+                    onChange={(e) => setTiktokUsername(e.target.value)}
+                    placeholder="e.g. windahbasudara"
+                    className="w-full bg-zinc-800/50 border-2 border-zinc-700 focus:border-emerald-500 rounded-xl py-3 pl-10 pr-4 text-white outline-none transition-all placeholder:text-zinc-600"
+                  />
+                </div>
+              </div>
+              
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-zinc-400 ml-1 flex items-center gap-1">
+                   Session ID <span className="text-xs text-zinc-600">(Optional - If connection fails)</span>
+                </label>
+                <div className="relative">
+                  <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" size={18} />
+                  <input
+                    type="text"
+                    value={tiktokSessionId}
+                    onChange={(e) => setTiktokSessionId(e.target.value)}
+                    placeholder="Enter Session ID"
+                    className="w-full bg-zinc-800/50 border-2 border-zinc-700 focus:border-emerald-500 rounded-xl py-3 pl-10 pr-4 text-white outline-none transition-all placeholder:text-zinc-600"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl transition-colors shadow-lg shadow-emerald-500/20"
+                >
+                  Connect Live
                 </button>
               </div>
               
-              <form onSubmit={handleConnect} className="space-y-4">
-                 <div>
-                    <label className="text-xs uppercase font-bold text-zinc-500 mb-1 block">TikTok Username</label>
-                    <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 font-bold">@</span>
-                      <input 
-                        type="text" 
-                        value={tiktokUsername}
-                        onChange={(e) => setTiktokUsername(e.target.value)}
-                        placeholder="johndoe"
-                        className="w-full bg-zinc-800 border-2 border-zinc-700 focus:border-emerald-500 rounded-xl py-3 pl-8 pr-4 text-white font-bold outline-none transition-all placeholder-zinc-600"
-                        autoFocus
-                      />
-                    </div>
-                 </div>
-                 
-                 <button 
-                   type="submit"
-                   className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3.5 rounded-xl transition-all active:scale-95 shadow-lg shadow-emerald-900/20"
-                 >
-                   CONNECT
-                 </button>
-              </form>
-           </div>
+              <div className="text-center">
+                 <p className={`text-xs font-medium ${isConnected ? 'text-emerald-400' : 'text-zinc-500'}`}>
+                    Status: {connectionStatus}
+                 </p>
+              </div>
+            </form>
+          </div>
         </div>
       )}
-
-      {/* Toasts */}
-      <div className="absolute top-20 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-2 w-full max-w-sm px-4 pointer-events-none">
-        {toasts.map((toast) => (
-          <div 
-            key={toast.id}
-            className={`
-              px-4 py-3 rounded-xl shadow-xl flex items-center justify-center gap-2 font-bold text-sm border backdrop-blur-sm animate-slide-up transition-all
-              ${toast.type === 'error' ? 'bg-rose-500/90 border-rose-400/50 text-white shadow-rose-900/20' : 
-                toast.type === 'success' ? 'bg-emerald-500/90 border-emerald-400/50 text-white shadow-emerald-900/20' : 
-                'bg-zinc-800/90 border-zinc-700/50 text-white'}
-            `}
-          >
-            {toast.type === 'error' && <AlertCircle size={18} />}
-            {toast.type === 'success' && <CheckCircle size={18} />}
-            <span>{toast.message}</span>
-          </div>
-        ))}
-      </div>
 
     </div>
   );

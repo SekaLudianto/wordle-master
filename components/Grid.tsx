@@ -19,14 +19,17 @@ interface CellProps {
 }
 
 const Cell: React.FC<CellProps> = ({ char, status, animate, wordLength }) => {
+  // Adjusted text sizes for better fit inside squares on mobile
   let textSize = "text-3xl";
-  if (wordLength > 12) textSize = "text-xs sm:text-sm font-black";
-  else if (wordLength > 10) textSize = "text-sm sm:text-base font-black";
-  else if (wordLength > 8) textSize = "text-lg sm:text-xl font-black";
-  else if (wordLength > 6) textSize = "text-2xl sm:text-2xl font-black";
-  else textSize = "text-3xl sm:text-4xl font-black";
+  if (wordLength > 12) textSize = "text-[10px] sm:text-xs font-black";
+  else if (wordLength > 10) textSize = "text-xs sm:text-sm font-black";
+  else if (wordLength > 8) textSize = "text-sm sm:text-base font-black";
+  else if (wordLength > 6) textSize = "text-lg sm:text-xl font-black";
+  else textSize = "text-2xl sm:text-3xl font-black";
 
-  let baseClass = `flex items-center justify-center border-2 rounded-lg sm:rounded-xl uppercase select-none transition-all duration-500 ${textSize} relative overflow-hidden`;
+  // Added 'aspect-square' to force 1:1 ratio
+  // Added 'w-full' to ensure it fills the grid column
+  let baseClass = `flex items-center justify-center border-2 rounded-md sm:rounded-xl uppercase select-none transition-all duration-500 ${textSize} relative overflow-hidden aspect-square w-full`;
   let colorClass = "border-zinc-800 bg-zinc-900/40"; 
   
   if (status === 'correct') {
@@ -81,39 +84,43 @@ const getRowStatuses = (guess: string, target: string): LetterStatus[] => {
   return statuses;
 };
 
-const UserBadge: React.FC<{ user?: TikTokUserData }> = ({ user }) => {
+// LEFT SIDE: Avatar Only
+const AvatarDisplay: React.FC<{ user?: TikTokUserData }> = ({ user }) => {
   if (!user) {
-    // Placeholder for empty row to keep grid alignment
-    return (
-       <div className="flex flex-col items-center justify-center w-20 sm:w-24 opacity-0 transition-opacity">
-         <div className="w-10 h-10 rounded-full bg-zinc-800" />
-       </div>
-    );
+    return <div className="w-10 sm:w-14 flex-shrink-0"></div>; // Placeholder
   }
 
   return (
-    <div className="flex flex-col items-center justify-center w-20 sm:w-24 animate-fade-in z-10 px-1">
-      <div className="relative mb-1">
-        {user.profilePictureUrl ? (
-          <img 
-            src={user.profilePictureUrl} 
-            alt={user.uniqueId} 
-            className="w-10 h-10 sm:w-12 sm:h-12 rounded-full border-2 border-zinc-700 shadow-lg object-cover ring-2 ring-transparent transition-all"
-          />
-        ) : (
-          <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-zinc-700 flex items-center justify-center border-2 border-zinc-600">
-            <User size={20} className="text-zinc-400" />
-          </div>
-        )}
-      </div>
-      <div className="flex flex-col items-center w-full">
-          <span className="text-[11px] sm:text-xs text-white font-bold truncate max-w-full leading-tight text-center drop-shadow-md">
-            {user.nickname}
-          </span>
-          <span className="text-[10px] sm:text-[11px] text-zinc-400 truncate max-w-full leading-tight text-center font-medium mt-0.5">
-            @{user.uniqueId}
-          </span>
-      </div>
+    <div className="w-10 sm:w-14 flex-shrink-0 flex justify-center animate-fade-in z-10">
+      {user.profilePictureUrl ? (
+        <img 
+          src={user.profilePictureUrl} 
+          alt={user.uniqueId} 
+          className="w-8 h-8 sm:w-12 sm:h-12 rounded-full border-2 border-zinc-700 shadow-lg object-cover ring-2 ring-transparent transition-all"
+        />
+      ) : (
+        <div className="w-8 h-8 sm:w-12 sm:h-12 rounded-full bg-zinc-700 flex items-center justify-center border-2 border-zinc-600">
+          <User size={16} className="text-zinc-400" />
+        </div>
+      )}
+    </div>
+  );
+};
+
+// RIGHT SIDE: Nickname Info
+const InfoDisplay: React.FC<{ user?: TikTokUserData }> = ({ user }) => {
+  if (!user) {
+     return <div className="w-16 sm:w-28 flex-shrink-0"></div>; // Placeholder
+  }
+
+  return (
+    <div className="w-16 sm:w-28 flex-shrink-0 flex flex-col justify-center animate-fade-in pl-1 sm:pl-2 overflow-hidden">
+        <span className="text-[10px] sm:text-xs text-white font-bold truncate w-full leading-tight drop-shadow-md text-left">
+          {user.nickname}
+        </span>
+        <span className="text-[9px] sm:text-[11px] text-zinc-400 truncate w-full leading-tight font-medium mt-0.5 text-left">
+          @{user.uniqueId}
+        </span>
     </div>
   );
 };
@@ -124,23 +131,23 @@ const Grid: React.FC<GridProps> = ({ guesses, currentGuess, targetWord, wordLeng
   const gridStyle = {
     display: 'grid',
     gridTemplateColumns: `repeat(${wordLength}, minmax(0, 1fr))`,
-    gap: wordLength > 10 ? '0.2rem' : '0.35rem',
+    gap: wordLength > 8 ? '0.2rem' : '0.35rem',
   };
 
   return (
     <div className="flex-1 w-full max-w-3xl mx-auto p-2 min-h-0 flex flex-col justify-center perspective-1000">
-      <div className="flex flex-col gap-3 w-full h-full justify-center max-h-[80vh]">
+      <div className="flex flex-col gap-2 sm:gap-3 w-full h-full justify-center max-h-[85vh]">
         
-        {/* Render Guesses with User Info */}
+        {/* Render Guesses with Split User Info */}
         {guesses.map((guessData, i) => {
           const statuses = getRowStatuses(guessData.word, targetWord);
           return (
             <div key={i} className="flex items-center gap-1 sm:gap-2 w-full">
-              {/* Left Side User Info */}
-              <UserBadge user={guessData.user} />
+              {/* Left: Avatar */}
+              <AvatarDisplay user={guessData.user} />
 
-              {/* Grid Cells */}
-              <div style={gridStyle} className="flex-1 max-h-16 aspect-auto min-h-0 shadow-xl bg-black/20 p-2 rounded-2xl backdrop-blur-sm border border-white/5">
+              {/* Center: Grid Cells */}
+              <div style={gridStyle} className="flex-1 max-h-16 aspect-auto min-h-0 shadow-xl bg-black/20 p-1.5 sm:p-2 rounded-xl backdrop-blur-sm border border-white/5 flex items-center">
                 {guessData.word.split('').map((char, j) => (
                   <Cell 
                     key={j} 
@@ -152,8 +159,8 @@ const Grid: React.FC<GridProps> = ({ guesses, currentGuess, targetWord, wordLeng
                 ))}
               </div>
               
-               {/* Right Side Spacer for Balance */}
-               <div className="w-20 sm:w-24 opacity-0"></div>
+               {/* Right: Info */}
+               <InfoDisplay user={guessData.user} />
             </div>
           );
         })}
@@ -161,26 +168,30 @@ const Grid: React.FC<GridProps> = ({ guesses, currentGuess, targetWord, wordLeng
         {/* Render Current Guess */}
         {guesses.length < maxGuesses && (
           <div className={`flex items-center gap-1 sm:gap-2 w-full ${isShake ? 'animate-shake' : ''}`}>
-             <div className="w-20 sm:w-24 opacity-0"></div>
-             <div style={gridStyle} className="flex-1 max-h-16 min-h-0 p-2">
+             <div className="w-10 sm:w-14 flex-shrink-0"></div> {/* Left Placeholder */}
+             
+             <div style={gridStyle} className="flex-1 max-h-16 min-h-0 p-1.5 sm:p-2 flex items-center">
               {Array.from({ length: wordLength }).map((_, i) => (
                 <Cell key={i} char={currentGuess[i] || ''} status="empty" wordLength={wordLength} />
               ))}
             </div>
-             <div className="w-20 sm:w-24 opacity-0"></div>
+             
+             <div className="w-16 sm:w-28 flex-shrink-0"></div> {/* Right Placeholder */}
           </div>
         )}
 
         {/* Render Empty Rows */}
         {Array.from({ length: empties }).map((_, i) => (
           <div key={`empty-${i}`} className="flex items-center gap-1 sm:gap-2 w-full opacity-30">
-             <div className="w-20 sm:w-24 opacity-0"></div>
-             <div style={gridStyle} className="flex-1 max-h-16 min-h-0 p-2">
+             <div className="w-10 sm:w-14 flex-shrink-0"></div> {/* Left Placeholder */}
+             
+             <div style={gridStyle} className="flex-1 max-h-16 min-h-0 p-1.5 sm:p-2 flex items-center">
                {Array.from({ length: wordLength }).map((__, j) => (
-                <div key={j} className="border-2 border-zinc-800/60 rounded-lg sm:rounded-xl bg-zinc-900/20"></div>
+                <div key={j} className="border-2 border-zinc-800/60 rounded-md sm:rounded-xl bg-zinc-900/20 aspect-square w-full"></div>
               ))}
             </div>
-             <div className="w-20 sm:w-24 opacity-0"></div>
+             
+             <div className="w-16 sm:w-28 flex-shrink-0"></div> {/* Right Placeholder */}
           </div>
         ))}
       </div>

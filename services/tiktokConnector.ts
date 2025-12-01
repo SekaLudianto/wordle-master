@@ -8,6 +8,7 @@ class TikTokConnector {
   // Use 'any' type for socket to prevent import issues with Socket type from CDN
   private socket: any = null;
   private uniqueId: string | null = null;
+  private sessionId: string | null = null;
 
   connectToBackend() {
     // Prevent multiple connections
@@ -30,8 +31,10 @@ class TikTokConnector {
     });
   }
 
-  setUniqueId(uniqueId: string) {
+  setUniqueId(uniqueId: string, sessionId?: string) {
     this.uniqueId = uniqueId;
+    this.sessionId = sessionId || null;
+    
     if (this.socket && this.socket.connected) {
       this.emitSetUniqueId();
     }
@@ -39,9 +42,17 @@ class TikTokConnector {
 
   private emitSetUniqueId() {
     if (!this.socket || !this.uniqueId) return;
-    this.socket.emit('setUniqueId', this.uniqueId, {
+    
+    const options: any = {
       enableExtendedGiftInfo: true
-    });
+    };
+
+    if (this.sessionId) {
+        options.sessionId = this.sessionId;
+        console.log("Connecting with Session ID...");
+    }
+
+    this.socket.emit('setUniqueId', this.uniqueId, options);
   }
 
   onChat(callback: (msg: TikTokChatEvent) => void) {
