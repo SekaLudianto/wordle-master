@@ -1,11 +1,12 @@
-import { io, Socket } from 'socket.io-client';
+import { io } from 'socket.io-client';
 import { TikTokChatEvent, TikTokMemberEvent } from '../types';
 
 // Connects to the hosted Node.js server
 const BACKEND_URL = "https://buat-lev.up.railway.app";
 
 class TikTokConnector {
-  private socket: Socket | null = null;
+  // Use 'any' type for socket to prevent import issues with Socket type from CDN
+  private socket: any = null;
   private uniqueId: string | null = null;
 
   connectToBackend() {

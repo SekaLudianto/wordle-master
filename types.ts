@@ -20,6 +20,7 @@ export interface DictionaryData {
 export interface ToastMessage {
   id: number;
   message: string;
+  type?: 'default' | 'error' | 'success';
 }
 
 export interface TikTokUserData {

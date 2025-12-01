@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Settings, RefreshCw, Trophy, Globe, X, Radio, Link as LinkIcon, User, Layers, Users, LayoutGrid } from 'lucide-react';
+import { Settings, RefreshCw, Trophy, Globe, X, Radio, Link as LinkIcon, User, Layers, Users, LayoutGrid, AlertCircle, CheckCircle } from 'lucide-react';
 import { fetchDictionary, getRandomWord, isValidWord } from './services/wordService';
 import { tiktokService } from './services/tiktokConnector';
 import Grid from './components/Grid';
@@ -9,6 +9,12 @@ import { DictionaryData, GameStatus, GuessData, Language, TikTokChatEvent, TikTo
 const PRAISE_WORDS: Record<Language, string[]> = {
   ID: ['LUAR BIASA!', 'SEMPURNA!', 'SANGAT HEBAT!', 'JENIUS!', 'MANTAP JIWA!', 'KEREN ABIS!', 'SENSASIONAL!', 'ISTIMEWA!'],
   EN: ['MAGNIFICENT!', 'OUTSTANDING!', 'BRILLIANT!', 'PERFECT!', 'SPECTACULAR!', 'GENIUS!', 'UNSTOPPABLE!', 'AMAZING!']
+};
+
+// Mock/Tease dictionary for losing
+const MOCK_MESSAGES: Record<Language, string[]> = {
+  ID: ['YAHHH KALAH 😜', 'COBA LAGI YA 😛', 'BELUM BERUNTUNG 🤪', 'ADUH SAYANG SEKALI 😝', 'KURANG JAGO NIHH 😜', 'UPS, GAGAL DEH 🫠'],
+  EN: ['OOPS, YOU LOST 😜', 'NICE TRY THOUGH 😛', 'BETTER LUCK NEXT TIME 🤪', 'SO CLOSE! 😝', 'NOT QUITE RIGHT 😜', 'GAME OVER 🫠']
 };
 
 const App: React.FC = () => {
@@ -43,7 +49,7 @@ const App: React.FC = () => {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   
   // Praise & Winner State
-  const [praise, setPraise] = useState<string | null>(null);
+  const [praise, setPraise] = useState<string | null>(null); // Used for both Praise (Win) and Mock (Lose) text
   const [winner, setWinner] = useState<TikTokUserData | null>(null);
 
   // Queue System
@@ -53,12 +59,16 @@ const App: React.FC = () => {
   const isProcessingRef = useRef(false); // Lock for preventing double guesses during animation
   const ANIMATION_DELAY = 1500; // ms to wait before processing next guess
 
-  const addToast = (msg: string) => {
+  const addToast = (msg: string, type: 'default' | 'error' | 'success' = 'default') => {
     const id = Date.now();
-    setToasts(prev => [...prev, { id, message: msg }]);
+    setToasts(prev => {
+      // Limit visible toasts to avoid clutter
+      const filtered = prev.length > 2 ? prev.slice(1) : prev;
+      return [...filtered, { id, message: msg, type }];
+    });
     setTimeout(() => {
       setToasts(prev => prev.filter(t => t.id !== id));
-    }, 2500);
+    }, 3000);
   };
 
   // --- GAME INITIALIZATION ---
@@ -82,14 +92,14 @@ const App: React.FC = () => {
       
       const word = getRandomWord(dict, wordLength);
       if (!word) {
-        addToast(`No ${wordLength}-letter words found`);
+        addToast(`No ${wordLength}-letter words found`, 'error');
         setTargetWord('');
       } else {
         setTargetWord(word);
         console.log('Target:', word); 
       }
     } catch (e) {
-      addToast('Error loading dictionary');
+      addToast('Error loading dictionary', 'error');
     } finally {
       setLoading(false);
     }
@@ -150,8 +160,7 @@ const App: React.FC = () => {
         const currentCount = userGuessCounts[user.userId] || 0;
         if (currentCount >= maxGuessesPerUser) {
             // User exceeded limit. 
-            // We silently skip or maybe toast once? 
-            // Better to silently skip to not disrupt flow, but call next queue item.
+            // Silent skip to not disrupt flow
             console.log(`User ${user.nickname} limit reached`);
             processQueue(); 
             return;
@@ -160,12 +169,17 @@ const App: React.FC = () => {
     
     // Check validation
     if (!dictionary || !isValidWord(guessWord, dictionary)) {
-       // Only shake/notify for manual guesses. 
-       if (!user) {
-         setShake(true);
-         addToast('Kata tidak valid!');
-         setTimeout(() => setShake(false), 500);
-       }
+       // Shake and feedback
+       setShake(true);
+       
+       const invalidMsg = user 
+         ? `Kata "${guessWord}" tidak ada di kamus!` 
+         : `Kata "${guessWord}" tidak valid!`;
+       
+       // Show red error toast
+       addToast(invalidMsg, 'error');
+
+       setTimeout(() => setShake(false), 500);
        
        // Crucial: If invalid, we must trigger next in queue immediately
        processQueue();
@@ -193,7 +207,7 @@ const App: React.FC = () => {
         if (guessWord === targetWord) {
             setGameStatus(GameStatus.WON);
             isGameOver = true;
-            addToast(`Benar! Oleh @${user?.uniqueId || 'Kamu'}`);
+            addToast(`Benar! Oleh ${user?.nickname || 'Kamu'}`, 'success');
             
             // Trigger Praise
             const praises = PRAISE_WORDS[language];
@@ -208,7 +222,10 @@ const App: React.FC = () => {
         } else if (updated.length >= maxGuesses) {
             setGameStatus(GameStatus.LOST);
             isGameOver = true;
-            addToast(`Game Over! Kata: ${targetWord}`);
+            // Trigger Mock Message
+            const mocks = MOCK_MESSAGES[language];
+            const randomMock = mocks[Math.floor(Math.random() * mocks.length)];
+            setPraise(randomMock); // Reusing praise state for overlay text
         }
 
         return updated;
@@ -238,11 +255,15 @@ const App: React.FC = () => {
       // But we might want to limit queue size to prevent backlog spam
       if (guessQueueRef.current.length > 50) return; // Cap queue size safety
       
-      const cleanGuess = msg.comment.trim().toUpperCase();
+      // Parse sentence: split by any non-letter characters
+      // This handles "Jawabannya: KATA" or "**** KATA" (filtered words) or "Bismillah MENANG"
+      const potentialWords = msg.comment.toUpperCase().split(/[^A-Z]+/);
       
-      // Strict validation for automated inputs
-      if (!/^[A-Z]+$/.test(cleanGuess)) return;
-      if (cleanGuess.length !== wordLength) return;
+      // Find the first word that matches the target word length
+      const cleanGuess = potentialWords.find(w => w.length === wordLength);
+      
+      // If no valid candidate found, ignore
+      if (!cleanGuess) return;
       
       // Add to Queue
       guessQueueRef.current.push({
@@ -301,13 +322,13 @@ const App: React.FC = () => {
     const onConnected = (state: any) => {
       setIsConnected(true);
       setConnectionStatus(`Connected to room ${state.roomId}`);
-      addToast('Terhubung ke TikTok Live!');
+      addToast('Terhubung ke TikTok Live!', 'success');
     };
 
     const onDisconnected = (msg: string) => {
       setIsConnected(false);
       setConnectionStatus('Disconnected');
-      addToast('Koneksi terputus.');
+      addToast('Koneksi terputus.', 'error');
     };
 
     tiktokService.onChat(onChat);
@@ -367,26 +388,47 @@ const App: React.FC = () => {
         ))}
       </div>
 
-      {/* --- PRAISE & WINNER OVERLAY --- */}
+      {/* --- PRAISE & WINNER OVERLAY (WON or LOST) --- */}
       {praise && (
-         <div className="absolute inset-0 z-40 flex flex-col items-center justify-center pointer-events-none bg-black/50 backdrop-blur-[4px] animate-fade-in gap-6">
-             <h1 className="text-5xl sm:text-7xl font-black text-transparent bg-clip-text bg-gradient-to-b from-yellow-300 to-amber-600 drop-shadow-[0_4px_10px_rgba(0,0,0,0.8)] animate-pop tracking-tighter text-center px-4">
-                 {praise}
-             </h1>
+         <div className="absolute inset-0 z-40 flex flex-col items-center justify-center pointer-events-none bg-black/60 backdrop-blur-[6px] animate-fade-in gap-6 p-4">
              
-             {winner && (
-               <div className="flex flex-col items-center animate-slide-up bg-zinc-900/40 p-6 rounded-3xl border border-white/10 backdrop-blur-md shadow-2xl">
-                  <div className="relative mb-3">
-                    <img 
-                      src={winner.profilePictureUrl} 
-                      alt={winner.nickname} 
-                      className="w-24 h-24 rounded-full border-4 border-yellow-500 shadow-[0_0_25px_rgba(234,179,8,0.5)] object-cover"
-                    />
-                    <Trophy className="absolute -bottom-2 -right-2 text-yellow-400 fill-yellow-400 drop-shadow-md" size={32} />
-                  </div>
-                  <h2 className="text-2xl font-bold text-white text-center px-4">{winner.nickname}</h2>
-                  <p className="text-zinc-400 font-medium text-sm">@{winner.uniqueId}</p>
-               </div>
+             {/* CONTENT BASED ON GAME STATUS */}
+             {gameStatus === GameStatus.WON ? (
+                // --- WIN UI ---
+                <>
+                  <h1 className="text-5xl sm:text-7xl font-black text-transparent bg-clip-text bg-gradient-to-b from-yellow-300 to-amber-600 drop-shadow-[0_4px_10px_rgba(0,0,0,0.8)] animate-pop tracking-tighter text-center">
+                     {praise}
+                  </h1>
+                  {winner && (
+                   <div className="flex flex-col items-center animate-slide-up bg-zinc-900/60 p-6 rounded-3xl border border-yellow-500/30 backdrop-blur-md shadow-[0_0_50px_rgba(234,179,8,0.2)]">
+                      <div className="relative mb-3">
+                        <img 
+                          src={winner.profilePictureUrl} 
+                          alt={winner.nickname} 
+                          className="w-24 h-24 rounded-full border-4 border-yellow-500 shadow-[0_0_25px_rgba(234,179,8,0.5)] object-cover"
+                        />
+                        <Trophy className="absolute -bottom-2 -right-2 text-yellow-400 fill-yellow-400 drop-shadow-md" size={32} />
+                      </div>
+                      <h2 className="text-2xl font-bold text-white text-center px-4">{winner.nickname}</h2>
+                      <p className="text-zinc-400 font-medium text-sm">@{winner.uniqueId}</p>
+                   </div>
+                  )}
+                </>
+             ) : (
+                // --- LOST UI ---
+                <>
+                  <div className="text-8xl mb-2 animate-bounce drop-shadow-xl filter grayscale-[0.2]">😜</div>
+                  <h1 className="text-4xl sm:text-6xl font-black text-transparent bg-clip-text bg-gradient-to-b from-rose-400 to-red-600 drop-shadow-[0_4px_10px_rgba(0,0,0,0.8)] animate-pop tracking-tighter text-center leading-tight">
+                     {praise}
+                  </h1>
+                  
+                  <div className="flex flex-col items-center animate-slide-up bg-zinc-900/60 p-6 rounded-3xl border border-rose-500/30 backdrop-blur-md shadow-[0_0_50px_rgba(244,63,94,0.2)] mt-4">
+                      <span className="text-zinc-400 font-bold uppercase tracking-widest text-sm mb-2">JAWABANNYA ADALAH</span>
+                      <h2 className="text-5xl sm:text-6xl font-black text-white text-center tracking-widest drop-shadow-lg">
+                        {targetWord}
+                      </h2>
+                   </div>
+                </>
              )}
          </div>
       )}
@@ -597,13 +639,20 @@ const App: React.FC = () => {
       )}
 
       {/* Toasts */}
-      <div className="absolute top-20 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-2 w-full max-w-xs px-4 pointer-events-none">
+      <div className="absolute top-20 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-2 w-full max-w-sm px-4 pointer-events-none">
         {toasts.map((toast) => (
           <div 
             key={toast.id}
-            className="bg-zinc-800/90 text-white px-4 py-3 rounded-xl shadow-xl text-center font-bold text-sm border border-zinc-700/50 animate-slide-up backdrop-blur-sm"
+            className={`
+              px-4 py-3 rounded-xl shadow-xl flex items-center justify-center gap-2 font-bold text-sm border backdrop-blur-sm animate-slide-up transition-all
+              ${toast.type === 'error' ? 'bg-rose-500/90 border-rose-400/50 text-white shadow-rose-900/20' : 
+                toast.type === 'success' ? 'bg-emerald-500/90 border-emerald-400/50 text-white shadow-emerald-900/20' : 
+                'bg-zinc-800/90 border-zinc-700/50 text-white'}
+            `}
           >
-            {toast.message}
+            {toast.type === 'error' && <AlertCircle size={18} />}
+            {toast.type === 'success' && <CheckCircle size={18} />}
+            <span>{toast.message}</span>
           </div>
         ))}
       </div>
