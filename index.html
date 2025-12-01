@@ -6,6 +6,7 @@
     <meta name="theme-color" content="#09090b" />
     <meta name="description" content="Wordle Game Indonesia & English" />
     <title>Wordle Master</title>
+    <!-- Keep Tailwind CDN for simplicity in this setup, or migrate to PostCSS later -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
@@ -84,7 +85,9 @@
     "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
     "react/": "https://aistudiocdn.com/react@^19.2.0/",
     "lucide-react": "https://aistudiocdn.com/lucide-react@^0.555.0",
-    "socket.io-client": "https://cdn.socket.io/4.4.1/socket.io.esm.min.js"
+    "socket.io-client": "https://aistudiocdn.com/socket.io-client@^4.8.1",
+    "vite": "https://aistudiocdn.com/vite@^7.2.6",
+    "@vitejs/plugin-react": "https://aistudiocdn.com/@vitejs/plugin-react@^5.1.1"
   }
 }
 </script>
@@ -92,6 +95,6 @@
 </head>
   <body class="bg-background text-zinc-100 h-[100dvh] w-screen overflow-hidden selection:bg-indigo-500/30">
     <div id="root" class="h-full w-full"></div>
-  <script type="module" src="/index.tsx"></script>
-</body>
+    <script type="module" src="/index.tsx"></script>
+  </body>
 </html>
