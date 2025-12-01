@@ -107,10 +107,10 @@ const UserBadge: React.FC<{ user?: TikTokUserData }> = ({ user }) => {
         )}
       </div>
       <div className="flex flex-col items-center w-full">
-          <span className="text-[10px] sm:text-xs text-zinc-200 font-bold truncate max-w-full leading-tight text-center">
+          <span className="text-[11px] sm:text-xs text-white font-bold truncate max-w-full leading-tight text-center drop-shadow-md">
             {user.nickname}
           </span>
-          <span className="text-[9px] sm:text-[10px] text-zinc-500 truncate max-w-full leading-tight text-center font-medium">
+          <span className="text-[10px] sm:text-[11px] text-zinc-400 truncate max-w-full leading-tight text-center font-medium mt-0.5">
             @{user.uniqueId}
           </span>
       </div>

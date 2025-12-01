@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Settings, RefreshCw, Trophy, Globe, X, Radio, Link as LinkIcon, User, Layers } from 'lucide-react';
+import { Settings, RefreshCw, Trophy, Globe, X, Radio, Link as LinkIcon, User, Layers, Users, LayoutGrid } from 'lucide-react';
 import { fetchDictionary, getRandomWord, isValidWord } from './services/wordService';
 import { tiktokService } from './services/tiktokConnector';
 import Grid from './components/Grid';
-import { DictionaryData, GameStatus, GuessData, Language, TikTokChatEvent, TikTokMemberEvent, ToastMessage } from './types';
+import { DictionaryData, GameStatus, GuessData, Language, TikTokChatEvent, TikTokMemberEvent, ToastMessage, TikTokUserData } from './types';
 
 // Praise dictionary
 const PRAISE_WORDS: Record<Language, string[]> = {
@@ -15,6 +15,11 @@ const App: React.FC = () => {
   // Config State
   const [language, setLanguage] = useState<Language>('ID');
   const [wordLength, setWordLength] = useState<number>(5);
+  
+  // New Settings
+  const [maxGuesses, setMaxGuesses] = useState<number>(6); // Default 6 rows
+  const [maxGuessesPerUser, setMaxGuessesPerUser] = useState<number>(1); // Default 1 guess per person (0 = unlimited)
+  
   const [showSettings, setShowSettings] = useState(false);
   const [showConnect, setShowConnect] = useState(false);
   
@@ -31,19 +36,20 @@ const App: React.FC = () => {
   // Game State
   const [targetWord, setTargetWord] = useState('');
   const [guesses, setGuesses] = useState<GuessData[]>([]);
+  const [userGuessCounts, setUserGuessCounts] = useState<Record<string, number>>({}); // Track user guesses per round
   const [currentGuess, setCurrentGuess] = useState(''); // Only for manual typing if needed
   const [gameStatus, setGameStatus] = useState<GameStatus>(GameStatus.PLAYING);
   const [shake, setShake] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   
-  // Praise State
+  // Praise & Winner State
   const [praise, setPraise] = useState<string | null>(null);
+  const [winner, setWinner] = useState<TikTokUserData | null>(null);
 
   // Queue System
   const [queueLength, setQueueLength] = useState(0); // For UI display only
   const guessQueueRef = useRef<{word: string, user?: any}[]>([]);
 
-  const MAX_GUESSES = 6; 
   const isProcessingRef = useRef(false); // Lock for preventing double guesses during animation
   const ANIMATION_DELAY = 1500; // ms to wait before processing next guess
 
@@ -61,12 +67,14 @@ const App: React.FC = () => {
     setLoading(true);
     setGameStatus(GameStatus.PLAYING);
     setGuesses([]);
+    setUserGuessCounts({}); // Reset user counters
     setCurrentGuess('');
     setShake(false);
     setPraise(null);
+    setWinner(null);
     isProcessingRef.current = false;
-    guessQueueRef.current = []; // Clear queue on reset
-    setQueueLength(0);
+    // NOTE: We do NOT clear queue here (guessQueueRef.current = []) 
+    // to allow guesses made during the transition to be processed in the next game.
     
     try {
       const dict = await fetchDictionary(language);
@@ -110,17 +118,49 @@ const App: React.FC = () => {
     if (nextItem) {
       processGuess(nextItem.word, nextItem.user);
     }
-  }, [gameStatus, dictionary, targetWord]); // Dependencies needed for processGuess closure context if not passed directly
+  }, [gameStatus, dictionary, targetWord]); // Dependencies needed for processGuess closure context
+
+  // Watch for game ready state to kickstart queue
+  useEffect(() => {
+    if (gameStatus === GameStatus.PLAYING && !loading && targetWord && guessQueueRef.current.length > 0) {
+      processQueue();
+    }
+  }, [gameStatus, loading, targetWord, processQueue]);
+
+  // AUTO RESTART LISTENER
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    
+    // Auto restart if Game Over
+    if (gameStatus === GameStatus.WON || gameStatus === GameStatus.LOST) {
+      timer = setTimeout(() => {
+        initGame();
+      }, 5000); // 5 seconds delay before restart
+    }
+    
+    return () => clearTimeout(timer);
+  }, [gameStatus, initGame]);
 
   const processGuess = (guessWord: string, user?: any) => {
     // Double check status just in case
     if (gameStatus !== GameStatus.PLAYING || loading) return;
+
+    // Check User Limits
+    if (user && maxGuessesPerUser > 0) {
+        const currentCount = userGuessCounts[user.userId] || 0;
+        if (currentCount >= maxGuessesPerUser) {
+            // User exceeded limit. 
+            // We silently skip or maybe toast once? 
+            // Better to silently skip to not disrupt flow, but call next queue item.
+            console.log(`User ${user.nickname} limit reached`);
+            processQueue(); 
+            return;
+        }
+    }
     
     // Check validation
     if (!dictionary || !isValidWord(guessWord, dictionary)) {
        // Only shake/notify for manual guesses. 
-       // For queue items, we silently skip invalid words to keep the game moving fast,
-       // OR we could toast it. Let's toast it briefly but not block queue long.
        if (!user) {
          setShake(true);
          addToast('Kata tidak valid!');
@@ -141,6 +181,14 @@ const App: React.FC = () => {
     setGuesses(prev => {
         const updated = [...prev, newGuessObj];
         
+        // Update user guess count
+        if (user) {
+            setUserGuessCounts(prevCounts => ({
+                ...prevCounts,
+                [user.userId]: (prevCounts[user.userId] || 0) + 1
+            }));
+        }
+        
         // Check Win/Loss
         if (guessWord === targetWord) {
             setGameStatus(GameStatus.WON);
@@ -151,8 +199,13 @@ const App: React.FC = () => {
             const praises = PRAISE_WORDS[language];
             const randomPraise = praises[Math.floor(Math.random() * praises.length)];
             setPraise(randomPraise);
+            
+            // Set Winner
+            if (user) {
+              setWinner(user);
+            }
 
-        } else if (updated.length >= MAX_GUESSES) {
+        } else if (updated.length >= maxGuesses) {
             setGameStatus(GameStatus.LOST);
             isGameOver = true;
             addToast(`Game Over! Kata: ${targetWord}`);
@@ -162,18 +215,12 @@ const App: React.FC = () => {
     });
 
     setCurrentGuess('');
-    
-    // Auto restart logic (independent of queue processing)
-    if (isGameOver && isConnected) {
-        setTimeout(() => {
-          isProcessingRef.current = false; 
-          initGame();
-        }, 5000);
-    }
 
     // Unlock and process next item after animation
     setTimeout(() => {
-        // Only unlock if game isn't over
+        // Only unlock if game isn't over.
+        // If game IS over, we keep isProcessingRef = true to prevent
+        // further guesses from the queue until initGame resets it.
         if (!isGameOver) {
             isProcessingRef.current = false;
             // Recursively call queue processor
@@ -187,8 +234,9 @@ const App: React.FC = () => {
   // Ref Pattern: Update these functions on every render so the socket listener
   // always calls the version with the latest state (closure).
   const handleTikTokGuess = (msg: TikTokChatEvent) => {
-      // Logic for processing a chat message
-      if (gameStatus !== GameStatus.PLAYING) return;
+      // Allow adding to queue even if game is WON/LOST, so they process in next round
+      // But we might want to limit queue size to prevent backlog spam
+      if (guessQueueRef.current.length > 50) return; // Cap queue size safety
       
       const cleanGuess = msg.comment.trim().toUpperCase();
       
@@ -196,7 +244,7 @@ const App: React.FC = () => {
       if (!/^[A-Z]+$/.test(cleanGuess)) return;
       if (cleanGuess.length !== wordLength) return;
       
-      // Add to Queue instead of processing immediately
+      // Add to Queue
       guessQueueRef.current.push({
         word: cleanGuess,
         user: {
@@ -237,374 +285,329 @@ const App: React.FC = () => {
     handleTikTokMemberRef.current = handleTikTokMember;
   });
 
-  // Setup Socket Listeners (Run once)
+  // SETUP SOCKET
   useEffect(() => {
     tiktokService.connectToBackend();
 
-    tiktokService.onConnected((state) => {
+    // Listeners that proxy to the ref (to avoid stale closures)
+    const onChat = (msg: TikTokChatEvent) => {
+      handleTikTokGuessRef.current(msg);
+    };
+
+    const onMember = (msg: TikTokMemberEvent) => {
+      handleTikTokMemberRef.current(msg);
+    };
+
+    const onConnected = (state: any) => {
       setIsConnected(true);
-      setConnectionStatus(`Connected to room: ${state.roomId}`);
-      setShowConnect(false);
-      addToast('Terhubung ke TikTok Live! 🟢');
-    });
+      setConnectionStatus(`Connected to room ${state.roomId}`);
+      addToast('Terhubung ke TikTok Live!');
+    };
 
-    tiktokService.onDisconnected((err) => {
+    const onDisconnected = (msg: string) => {
       setIsConnected(false);
-      setConnectionStatus(`Disconnected: ${err}`);
-      addToast('Koneksi Putus 🔴');
-    });
+      setConnectionStatus('Disconnected');
+      addToast('Koneksi terputus.');
+    };
 
-    // Use the Ref to call the current handler
-    const chatListener = (msg: TikTokChatEvent) => handleTikTokGuessRef.current(msg);
-    const memberListener = (msg: TikTokMemberEvent) => handleTikTokMemberRef.current(msg);
+    tiktokService.onChat(onChat);
+    tiktokService.onMember(onMember);
+    tiktokService.onConnected(onConnected);
+    tiktokService.onDisconnected(onDisconnected);
+    tiktokService.onError((err) => console.error("Socket error:", err));
 
-    tiktokService.onChat(chatListener);
-    tiktokService.onMember(memberListener);
-    
-    // Cleanup
     return () => {
-       tiktokService.offChat(chatListener);
-       tiktokService.offMember(memberListener);
-       tiktokService.disconnect();
+      tiktokService.offChat(onChat);
+      tiktokService.offMember(onMember);
+      tiktokService.disconnect();
     };
   }, []);
 
-  const handleConnect = () => {
-    if (!tiktokUsername) return;
-    setConnectionStatus('Connecting...');
-    tiktokService.setUniqueId(tiktokUsername);
+  // Handle Manual Connect
+  const handleConnect = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (tiktokUsername) {
+      tiktokService.setUniqueId(tiktokUsername);
+      setShowConnect(false);
+      addToast(`Connecting to @${tiktokUsername}...`);
+    }
   };
 
-  // --- MANUAL INPUT (PHYSICAL KEYBOARD) ---
+  // Host Controls (Keyboard)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (loading || gameStatus !== GameStatus.PLAYING) return;
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
-
-      const key = e.key.toUpperCase();
-      
-      if (key === 'ENTER') {
-         if (currentGuess.length !== wordLength) {
-            setShake(true);
-            addToast('Huruf kurang!');
-            setTimeout(() => setShake(false), 500);
-            return;
-         }
-         processGuess(currentGuess, undefined);
-      } else if (key === 'BACKSPACE') {
-         setCurrentGuess(prev => prev.slice(0, -1));
-      } else if (/^[A-Z]$/.test(key)) {
-         if (currentGuess.length < wordLength) {
-           setCurrentGuess(prev => prev + key);
-         }
+      // Manual/Debug controls for Host
+      if (e.key === 'F2') {
+        initGame(); // Force restart
       }
     };
-
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentGuess, gameStatus, loading, wordLength, dictionary, targetWord]); // Dependencies for manual input are fine as this effect re-runs
-
+  }, [initGame]);
 
   return (
-    <div className="flex flex-col h-full bg-background text-zinc-100 relative overflow-hidden font-sans">
+    <div className="flex flex-col h-full w-full bg-background relative overflow-hidden">
       
-      {/* Background Decor */}
-      <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none z-0">
-        <div className="absolute top-[-10%] right-[-10%] w-[50%] h-[50%] bg-indigo-900/20 rounded-full blur-[80px]" />
-        <div className="absolute bottom-[-10%] left-[-10%] w-[50%] h-[50%] bg-emerald-900/20 rounded-full blur-[80px]" />
-      </div>
-
-      {/* Header */}
-      <header className="relative z-20 flex items-center justify-between px-4 py-3 border-b border-white/5 bg-zinc-900/60 backdrop-blur-md shrink-0 shadow-lg shadow-black/20">
-        <div className="w-10">
-           <button onClick={() => setShowSettings(true)} className="p-2 rounded-full hover:bg-white/10 transition-colors">
-            <Settings size={20} className="text-zinc-400 hover:text-white" />
-          </button>
-        </div>
-        
-        <div className="flex flex-col items-center">
-          <h1 className="text-xl font-black tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 drop-shadow-sm">
-            WORDLE
-          </h1>
-          <button 
-            onClick={() => setShowConnect(true)}
-            className={`flex items-center gap-1.5 mt-1 px-3 py-1 rounded-full border text-[10px] font-bold tracking-wide transition-all ${
-              isConnected 
-                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 shadow-[0_0_10px_rgba(16,185,129,0.2)]' 
-                : 'border-zinc-700 bg-zinc-800/50 text-zinc-400 hover:bg-zinc-700 hover:text-white'
-            }`}
-          >
-            {isConnected ? (
-                <>
-                    <span className="relative flex h-1.5 w-1.5">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
-                    </span>
-                    TIKTOK LIVE
-                </>
-            ) : (
-                <>
-                    <LinkIcon size={10} />
-                    CONNECT TIKTOK
-                </>
-            )}
-          </button>
-        </div>
-
-        <div className="w-10 flex justify-end">
-          <button onClick={initGame} className="p-2 rounded-full hover:bg-white/10 transition-colors">
-            <RefreshCw size={20} className={`text-zinc-400 hover:text-white ${loading ? 'animate-spin' : ''}`} />
-          </button>
-        </div>
-      </header>
-
-      {/* Floating Welcome Notifications (Top-Right) */}
-      <div className="absolute top-20 right-4 z-40 flex flex-col gap-2 pointer-events-none w-72 items-end">
+      {/* --- FLOATING NOTIFICATIONS (JOIN) --- */}
+      <div className="absolute top-20 right-4 z-50 flex flex-col gap-2 pointer-events-none w-64 items-end">
         {recentJoins.map((joiner) => (
           <div 
             key={joiner.id} 
-            className="animate-slide-in-right flex items-center gap-3 bg-zinc-800/60 backdrop-blur-xl border-l-4 border-emerald-500 p-2 pr-4 rounded-r-lg rounded-l-sm shadow-[0_4px_20px_rgba(0,0,0,0.3)] w-auto max-w-full ring-1 ring-white/5"
+            className="animate-slide-in-right bg-white/10 backdrop-blur-md border border-white/20 p-3 rounded-xl shadow-2xl flex items-center gap-3 w-full"
           >
-             <div className="w-10 h-10 rounded-full border-2 border-zinc-700/50 overflow-hidden flex-shrink-0 relative shadow-md">
-                {joiner.profilePictureUrl ? (
-                   <img src={joiner.profilePictureUrl} alt={joiner.nickname} className="w-full h-full object-cover" />
-                ) : (
-                   <div className="w-full h-full bg-zinc-700 flex items-center justify-center"><User size={16} /></div>
-                )}
+             <div className="relative">
+                <img src={joiner.profilePictureUrl} className="w-10 h-10 rounded-full border border-white/30" alt="pfp" />
+                <div className="absolute -bottom-1 -right-1 bg-green-500 w-3 h-3 rounded-full border-2 border-zinc-900"></div>
              </div>
-             <div className="flex flex-col min-w-0 text-left">
-                <span className="text-[9px] text-emerald-400 font-bold uppercase tracking-wider">
-                  Welcome
-                </span>
-                <span className="text-xs font-bold text-white truncate max-w-[150px] leading-tight">
-                  {joiner.nickname}
-                </span>
+             <div className="flex flex-col overflow-hidden">
+                <span className="text-white font-bold text-sm truncate">{joiner.nickname}</span>
+                <span className="text-emerald-300 text-xs font-medium uppercase tracking-wider">Welcome!</span>
              </div>
           </div>
         ))}
       </div>
 
-      {/* Main Game Area */}
-      <div className="flex-1 flex flex-col items-center justify-center w-full overflow-hidden relative z-10 pb-6">
-        
-        {/* Toasts (Top Center) */}
-        <div className="absolute top-4 left-0 right-0 z-50 flex flex-col items-center gap-2 pointer-events-none">
-          {toasts.map(t => (
-            <div key={t.id} className="bg-zinc-800/90 backdrop-blur border border-zinc-700 text-white px-5 py-2 rounded-full shadow-2xl font-semibold text-xs sm:text-sm animate-pop flex items-center gap-2">
-              <span className="w-2 h-2 bg-indigo-500 rounded-full"></span>
-              {t.message}
-            </div>
-          ))}
-        </div>
-        
-        {/* Queue Indicator */}
-        {queueLength > 0 && (
-           <div className="absolute top-20 left-4 z-30 bg-zinc-900/80 backdrop-blur-md px-3 py-1.5 rounded-lg border border-white/10 flex items-center gap-2 animate-fade-in shadow-lg">
-               <Layers size={14} className="text-indigo-400 animate-pulse" />
-               <span className="text-[10px] font-bold text-zinc-300">ANTRIAN: <span className="text-white">{queueLength}</span></span>
-           </div>
-        )}
-
-        {/* PRAISE OVERLAY */}
-        {praise && (
-          <div className="absolute inset-0 z-40 flex items-center justify-center pointer-events-none">
-             <div className="animate-pop text-center relative">
-                {/* Glow Effect */}
-                <div className="absolute inset-0 bg-amber-500/20 blur-[60px] rounded-full animate-pulse-slow"></div>
-                
-                {/* Main Text */}
-                <h1 className="relative text-5xl md:text-7xl font-black text-transparent bg-clip-text bg-gradient-to-b from-yellow-200 via-amber-400 to-orange-500 drop-shadow-[0_4px_10px_rgba(0,0,0,0.8)] tracking-tighter transform -rotate-2 scale-110 shadow-amber-500/50">
-                   {praise}
-                </h1>
-             </div>
-          </div>
-        )}
-
-        {/* Grid */}
-        <Grid 
-          guesses={guesses}
-          currentGuess={currentGuess}
-          targetWord={targetWord}
-          wordLength={wordLength}
-          maxGuesses={MAX_GUESSES}
-          isShake={shake}
-        />
-        
-        <div className="text-zinc-500 text-[10px] font-medium tracking-wide mt-4 opacity-50">
-           {isConnected ? 'MENUNGGU KOMENTAR TIKTOK...' : 'TEKAN TOMBOL CONNECT UNTUK MEMULAI'}
-        </div>
-      </div>
-
-      {/* Connect Modal */}
-      {showConnect && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-zinc-950/80 backdrop-blur-sm animate-fade-in">
-           <div className="bg-zinc-900 border border-white/10 p-6 rounded-3xl shadow-2xl w-full max-w-sm ring-1 ring-white/10">
-              <div className="flex justify-between items-center mb-4">
-                  <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                      <Radio className="text-rose-500" /> TikTok Connection
-                  </h2>
-                  <button onClick={() => setShowConnect(false)}><X className="text-zinc-500" /></button>
-              </div>
-
-              <div className="space-y-4">
-                  <div className="bg-zinc-800/50 p-3 rounded-xl border border-white/5 text-xs text-zinc-400">
-                      Sambungkan ke TikTok Live agar penonton bisa ikut bermain lewat komentar!
-                      <div className="mt-2 font-mono text-[10px] bg-black/30 p-2 rounded">
-                          Status Server: <span className={isConnected ? "text-emerald-400" : "text-amber-400"}>{connectionStatus}</span>
-                      </div>
+      {/* --- PRAISE & WINNER OVERLAY --- */}
+      {praise && (
+         <div className="absolute inset-0 z-40 flex flex-col items-center justify-center pointer-events-none bg-black/50 backdrop-blur-[4px] animate-fade-in gap-6">
+             <h1 className="text-5xl sm:text-7xl font-black text-transparent bg-clip-text bg-gradient-to-b from-yellow-300 to-amber-600 drop-shadow-[0_4px_10px_rgba(0,0,0,0.8)] animate-pop tracking-tighter text-center px-4">
+                 {praise}
+             </h1>
+             
+             {winner && (
+               <div className="flex flex-col items-center animate-slide-up bg-zinc-900/40 p-6 rounded-3xl border border-white/10 backdrop-blur-md shadow-2xl">
+                  <div className="relative mb-3">
+                    <img 
+                      src={winner.profilePictureUrl} 
+                      alt={winner.nickname} 
+                      className="w-24 h-24 rounded-full border-4 border-yellow-500 shadow-[0_0_25px_rgba(234,179,8,0.5)] object-cover"
+                    />
+                    <Trophy className="absolute -bottom-2 -right-2 text-yellow-400 fill-yellow-400 drop-shadow-md" size={32} />
                   </div>
-
-                  <div>
-                      <label className="block text-xs font-bold text-zinc-500 uppercase mb-2">Username TikTok Host</label>
-                      <div className="flex gap-2">
-                          <div className="relative flex-1">
-                              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500">@</span>
-                              <input 
-                                type="text" 
-                                value={tiktokUsername}
-                                onChange={(e) => setTiktokUsername(e.target.value)}
-                                placeholder="username"
-                                className="w-full bg-zinc-800 text-white pl-8 pr-4 py-3 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 transition-all"
-                              />
-                          </div>
-                          <button 
-                             onClick={handleConnect}
-                             disabled={isConnected}
-                             className={`px-4 rounded-xl font-bold text-sm transition-all ${isConnected ? 'bg-emerald-600 text-white opacity-50' : 'bg-rose-600 text-white hover:bg-rose-500'}`}
-                          >
-                             {isConnected ? 'OK' : 'Go'}
-                          </button>
-                      </div>
-                  </div>
-
-                  <div className="text-[10px] text-zinc-500 text-center">
-                      Pastikan akun sedang LIVE streaming.
-                  </div>
-              </div>
-           </div>
-        </div>
+                  <h2 className="text-2xl font-bold text-white text-center px-4">{winner.nickname}</h2>
+                  <p className="text-zinc-400 font-medium text-sm">@{winner.uniqueId}</p>
+               </div>
+             )}
+         </div>
       )}
 
+      {/* --- HEADER --- */}
+      <header className="flex-none p-4 flex items-center justify-between bg-zinc-900/50 border-b border-white/5 backdrop-blur-md z-30">
+        <div className="flex items-center gap-3">
+           <button 
+             onClick={() => setShowConnect(true)}
+             className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold transition-all ${isConnected ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-400 border border-rose-500/30 animate-pulse'}`}
+           >
+              <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+              {isConnected ? 'LIVE' : 'CONNECT TIKTOK'}
+           </button>
+           
+           {queueLength > 0 && (
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-indigo-500/20 border border-indigo-500/30">
+                 <Layers size={12} className="text-indigo-400" />
+                 <span className="text-xs font-bold text-indigo-300">QUEUE: {queueLength}</span>
+              </div>
+           )}
+        </div>
+
+        <div className="flex items-center gap-2">
+           <button 
+            onClick={initGame} 
+            disabled={loading}
+            className="p-2 rounded-full bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white transition-colors"
+           >
+             <RefreshCw size={20} className={loading ? 'animate-spin' : ''} />
+           </button>
+           <button 
+            onClick={() => setShowSettings(true)}
+            className="p-2 rounded-full bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white transition-colors"
+           >
+             <Settings size={20} />
+           </button>
+        </div>
+      </header>
+
+      {/* --- MAIN GRID --- */}
+      <main className="flex-1 flex flex-col relative overflow-hidden">
+        {loading ? (
+           <div className="flex-1 flex items-center justify-center">
+             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500"></div>
+           </div>
+        ) : (
+          <Grid 
+            guesses={guesses}
+            currentGuess={currentGuess}
+            targetWord={targetWord}
+            wordLength={wordLength}
+            maxGuesses={maxGuesses}
+            isShake={shake}
+          />
+        )}
+      </main>
+
+      {/* --- MODALS --- */}
+      
       {/* Settings Modal */}
       {showSettings && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-zinc-950/60 backdrop-blur-sm animate-fade-in">
-          <div className="bg-zinc-900/90 backdrop-blur-xl border border-white/10 p-6 rounded-3xl shadow-2xl w-full max-w-sm relative ring-1 ring-white/10">
-            <button onClick={() => setShowSettings(false)} className="absolute top-4 right-4 text-zinc-500 hover:text-white transition-colors">
-              <X size={24} />
-            </button>
-            
-            <h2 className="text-xl font-bold mb-6 text-center text-white flex items-center justify-center gap-2">
-              <Settings size={20} className="text-indigo-400" />
-              Pengaturan
-            </h2>
-            
+        <div className="absolute inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-md shadow-2xl p-6 h-auto max-h-[85vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-bold flex items-center gap-2">
+                <Settings className="text-indigo-500" /> Pengaturan
+              </h2>
+              <button onClick={() => setShowSettings(false)} className="text-zinc-500 hover:text-white">
+                <X size={24} />
+              </button>
+            </div>
+
             <div className="space-y-6">
+              {/* Language */}
               <div>
-                <label className="block text-xs text-zinc-400 uppercase tracking-wider font-bold mb-3 flex items-center gap-2">
-                  <Globe size={14} /> Bahasa / Language
+                <label className="text-sm font-medium text-zinc-400 mb-3 block flex items-center gap-2">
+                  <Globe size={16} /> Bahasa / Language
                 </label>
-                <div className="grid grid-cols-2 gap-2 bg-black/20 p-1 rounded-xl">
-                  {['ID', 'EN'].map((lang) => (
-                    <button 
+                <div className="grid grid-cols-2 gap-3">
+                  {(['ID', 'EN'] as const).map((lang) => (
+                    <button
                       key={lang}
-                      onClick={() => { setLanguage(lang as Language); setShowSettings(false); initGame(); }}
-                      className={`py-2.5 rounded-lg font-bold text-sm transition-all duration-200 ${
-                        language === lang 
-                          ? 'bg-zinc-700 text-white shadow-lg shadow-black/20 ring-1 ring-white/10' 
-                          : 'text-zinc-500 hover:bg-white/5 hover:text-zinc-300'
-                      }`}
+                      onClick={() => { setLanguage(lang); initGame(); }}
+                      className={`
+                        p-3 rounded-xl border flex items-center justify-center gap-2 font-bold transition-all
+                        ${language === lang 
+                          ? 'bg-indigo-600 border-indigo-500 text-white' 
+                          : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-zinc-700'}
+                      `}
                     >
-                      {lang === 'ID' ? 'Indonesia' : 'English'}
+                      {lang === 'ID' ? '🇮🇩 Indonesia' : '🇺🇸 English'}
                     </button>
                   ))}
                 </div>
               </div>
 
+              {/* Word Length */}
               <div>
-                <label className="block text-xs text-zinc-400 uppercase tracking-wider font-bold mb-3">
-                  Jumlah Huruf
+                <label className="text-sm font-medium text-zinc-400 mb-3 block flex items-center gap-2">
+                   <Trophy size={16} /> Jumlah Huruf ({wordLength})
                 </label>
-                <div className="bg-black/20 p-4 rounded-xl border border-white/5">
-                  <div className="flex justify-between items-center mb-4">
-                     <span className="text-zinc-400 text-sm">Panjang Kata</span>
-                     <span className="text-2xl font-black text-indigo-400">{wordLength}</span>
-                  </div>
-                  <input 
-                    type="range" 
-                    min="4" 
-                    max="8" 
-                    value={wordLength} 
-                    onChange={(e) => setWordLength(Number(e.target.value))}
-                    className="w-full h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-indigo-500 hover:accent-indigo-400 transition-colors"
-                  />
-                  <div className="flex justify-between text-[10px] text-zinc-600 font-bold mt-2 font-mono">
-                    <span>4</span>
-                    <span>8</span>
-                  </div>
+                <input 
+                  type="range" 
+                  min="4" 
+                  max="8" 
+                  value={wordLength}
+                  onChange={(e) => { setWordLength(Number(e.target.value)); }}
+                  onMouseUp={initGame} 
+                  onTouchEnd={initGame}
+                  className="w-full h-2 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                />
+                <div className="flex justify-between text-xs text-zinc-500 mt-2 font-mono">
+                  <span>4</span><span>5</span><span>6</span><span>7</span><span>8</span>
                 </div>
               </div>
 
-              <button 
-                onClick={() => setShowSettings(false)}
-                className="w-full bg-white text-black font-bold py-3.5 rounded-xl hover:bg-zinc-200 transition-colors shadow-[0_0_20px_rgba(255,255,255,0.1)]"
-              >
-                Simpan & Tutup
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+              {/* Max Guesses (Rows) */}
+              <div>
+                <label className="text-sm font-medium text-zinc-400 mb-3 block flex items-center gap-2">
+                   <LayoutGrid size={16} /> Kesempatan Menebak ({maxGuesses})
+                </label>
+                <input 
+                  type="range" 
+                  min="3" 
+                  max="12" 
+                  value={maxGuesses}
+                  onChange={(e) => { setMaxGuesses(Number(e.target.value)); }}
+                  onMouseUp={initGame} 
+                  onTouchEnd={initGame}
+                  className="w-full h-2 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                />
+                <div className="flex justify-between text-xs text-zinc-500 mt-2 font-mono">
+                  <span>3</span><span>6</span><span>12</span>
+                </div>
+              </div>
 
-      {/* Game Over Modal */}
-      {gameStatus !== GameStatus.PLAYING && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center p-6 bg-black/60 backdrop-blur-md">
-          <div className="bg-zinc-900 border border-white/10 p-8 rounded-3xl shadow-2xl text-center animate-pop max-w-xs w-full relative overflow-hidden ring-1 ring-white/10">
+               {/* Max Guesses Per User */}
+               <div>
+                <label className="text-sm font-medium text-zinc-400 mb-3 block flex items-center gap-2">
+                   <Users size={16} /> Batas Tebakan Per Orang
+                </label>
+                <div className="flex items-center gap-4 bg-zinc-800 p-3 rounded-xl border border-zinc-700">
+                    <span className={`text-lg font-bold ${maxGuessesPerUser === 0 ? 'text-emerald-400' : 'text-white'}`}>
+                        {maxGuessesPerUser === 0 ? 'UNLIMITED' : maxGuessesPerUser}
+                    </span>
+                    <input 
+                        type="range" 
+                        min="0" 
+                        max="5" 
+                        value={maxGuessesPerUser}
+                        onChange={(e) => { setMaxGuessesPerUser(Number(e.target.value)); }}
+                        className="w-full h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                    />
+                </div>
+                <p className="text-xs text-zinc-500 mt-2">
+                    0 = Tidak ada batas. 1 = Hanya satu tebakan per ronde.
+                </p>
+              </div>
+
+            </div>
             
-            <div className={`absolute top-0 left-0 w-full h-1 bg-gradient-to-r ${gameStatus === GameStatus.WON ? 'from-emerald-500 to-green-300' : 'from-red-500 to-orange-500'}`} />
-
-            <div className="mb-4 flex justify-center">
-              {gameStatus === GameStatus.WON ? (
-                <div className="w-16 h-16 bg-emerald-500/20 rounded-full flex items-center justify-center mb-2 animate-bounce">
-                  <Trophy size={32} className="text-emerald-400" />
-                </div>
-              ) : (
-                <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mb-2">
-                   <span className="text-3xl">😔</span>
-                </div>
-              )}
-            </div>
-
-            <h2 className="text-3xl font-black mb-1 text-white tracking-tight">
-              {gameStatus === GameStatus.WON ? 'HEBAT!' : 'YAHHH...'}
-            </h2>
-            <p className="text-zinc-400 text-sm mb-6">
-              {gameStatus === GameStatus.WON ? 'Kamu berhasil menebak kata:' : 'Jangan menyerah, kata kuncinya:'}
-            </p>
-
-            <div className="bg-black/30 p-4 rounded-xl mb-6 border border-white/5">
-               <span className="text-2xl font-mono tracking-[0.2em] font-bold text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-cyan-400">
-                 {targetWord}
-               </span>
-            </div>
-
-            <div className="flex flex-col gap-2">
-                <button 
-                  onClick={initGame}
-                  className={`w-full font-bold py-3.5 rounded-xl shadow-lg transform transition active:scale-95 text-white
-                    ${gameStatus === GameStatus.WON 
-                      ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/50' 
-                      : 'bg-zinc-700 hover:bg-zinc-600'}
-                  `}
-                >
-                  Main Lagi
-                </button>
-                {isConnected && (
-                     <p className="text-[10px] text-zinc-500 mt-2">Game akan restart otomatis dalam 5 detik...</p>
-                )}
+            <div className="mt-8 pt-6 border-t border-zinc-800 text-center">
+               <p className="text-xs text-zinc-500">Changes apply immediately. Game will restart.</p>
             </div>
           </div>
         </div>
       )}
+
+      {/* Connect TikTok Modal */}
+      {showConnect && (
+        <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
+           <div className="bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-sm p-6 shadow-2xl">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-xl font-bold flex items-center gap-2 text-white">
+                  <LinkIcon className="text-emerald-500" /> Connect TikTok
+                </h2>
+                <button onClick={() => setShowConnect(false)} className="text-zinc-500 hover:text-white">
+                  <X size={24} />
+                </button>
+              </div>
+              
+              <form onSubmit={handleConnect} className="space-y-4">
+                 <div>
+                    <label className="text-xs uppercase font-bold text-zinc-500 mb-1 block">TikTok Username</label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 font-bold">@</span>
+                      <input 
+                        type="text" 
+                        value={tiktokUsername}
+                        onChange={(e) => setTiktokUsername(e.target.value)}
+                        placeholder="johndoe"
+                        className="w-full bg-zinc-800 border-2 border-zinc-700 focus:border-emerald-500 rounded-xl py-3 pl-8 pr-4 text-white font-bold outline-none transition-all placeholder-zinc-600"
+                        autoFocus
+                      />
+                    </div>
+                 </div>
+                 
+                 <button 
+                   type="submit"
+                   className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3.5 rounded-xl transition-all active:scale-95 shadow-lg shadow-emerald-900/20"
+                 >
+                   CONNECT
+                 </button>
+              </form>
+           </div>
+        </div>
+      )}
+
+      {/* Toasts */}
+      <div className="absolute top-20 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-2 w-full max-w-xs px-4 pointer-events-none">
+        {toasts.map((toast) => (
+          <div 
+            key={toast.id}
+            className="bg-zinc-800/90 text-white px-4 py-3 rounded-xl shadow-xl text-center font-bold text-sm border border-zinc-700/50 animate-slide-up backdrop-blur-sm"
+          >
+            {toast.message}
+          </div>
+        ))}
+      </div>
+
     </div>
   );
 };
