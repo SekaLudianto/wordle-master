@@ -1,9 +1,15 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Settings, RefreshCw, Trophy, Globe, X, Radio, Link as LinkIcon, User } from 'lucide-react';
+import { Settings, RefreshCw, Trophy, Globe, X, Radio, Link as LinkIcon, User, Layers } from 'lucide-react';
 import { fetchDictionary, getRandomWord, isValidWord } from './services/wordService';
 import { tiktokService } from './services/tiktokConnector';
 import Grid from './components/Grid';
 import { DictionaryData, GameStatus, GuessData, Language, TikTokChatEvent, TikTokMemberEvent, ToastMessage } from './types';
+
+// Praise dictionary
+const PRAISE_WORDS: Record<Language, string[]> = {
+  ID: ['LUAR BIASA!', 'SEMPURNA!', 'SANGAT HEBAT!', 'JENIUS!', 'MANTAP JIWA!', 'KEREN ABIS!', 'SENSASIONAL!', 'ISTIMEWA!'],
+  EN: ['MAGNIFICENT!', 'OUTSTANDING!', 'BRILLIANT!', 'PERFECT!', 'SPECTACULAR!', 'GENIUS!', 'UNSTOPPABLE!', 'AMAZING!']
+};
 
 const App: React.FC = () => {
   // Config State
@@ -29,9 +35,17 @@ const App: React.FC = () => {
   const [gameStatus, setGameStatus] = useState<GameStatus>(GameStatus.PLAYING);
   const [shake, setShake] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  
+  // Praise State
+  const [praise, setPraise] = useState<string | null>(null);
+
+  // Queue System
+  const [queueLength, setQueueLength] = useState(0); // For UI display only
+  const guessQueueRef = useRef<{word: string, user?: any}[]>([]);
 
   const MAX_GUESSES = 6; 
   const isProcessingRef = useRef(false); // Lock for preventing double guesses during animation
+  const ANIMATION_DELAY = 1500; // ms to wait before processing next guess
 
   const addToast = (msg: string) => {
     const id = Date.now();
@@ -49,7 +63,10 @@ const App: React.FC = () => {
     setGuesses([]);
     setCurrentGuess('');
     setShake(false);
+    setPraise(null);
     isProcessingRef.current = false;
+    guessQueueRef.current = []; // Clear queue on reset
+    setQueueLength(0);
     
     try {
       const dict = await fetchDictionary(language);
@@ -76,44 +93,69 @@ const App: React.FC = () => {
 
   // --- CORE GAME LOGIC ---
 
+  // Queue Processor
+  const processQueue = useCallback(() => {
+    // Conditions to stop processing:
+    // 1. Already processing an animation
+    // 2. Queue is empty
+    // 3. Game is not in playing state (won/lost)
+    if (isProcessingRef.current || guessQueueRef.current.length === 0 || gameStatus !== GameStatus.PLAYING) {
+      return;
+    }
+
+    // Dequeue the next item
+    const nextItem = guessQueueRef.current.shift();
+    setQueueLength(guessQueueRef.current.length); // Update UI
+
+    if (nextItem) {
+      processGuess(nextItem.word, nextItem.user);
+    }
+  }, [gameStatus, dictionary, targetWord]); // Dependencies needed for processGuess closure context if not passed directly
+
   const processGuess = (guessWord: string, user?: any) => {
-    if (gameStatus !== GameStatus.PLAYING || loading || isProcessingRef.current) return;
+    // Double check status just in case
+    if (gameStatus !== GameStatus.PLAYING || loading) return;
     
     // Check validation
     if (!dictionary || !isValidWord(guessWord, dictionary)) {
-       // Only shake/notify for manual guesses or if debugging
+       // Only shake/notify for manual guesses. 
+       // For queue items, we silently skip invalid words to keep the game moving fast,
+       // OR we could toast it. Let's toast it briefly but not block queue long.
        if (!user) {
          setShake(true);
          addToast('Kata tidak valid!');
          setTimeout(() => setShake(false), 500);
        }
+       
+       // Crucial: If invalid, we must trigger next in queue immediately
+       processQueue();
        return;
     }
 
-    // Lock processing to prevent race conditions or spam
+    // Lock processing
     isProcessingRef.current = true;
 
     const newGuessObj: GuessData = { word: guessWord, user };
-    
+    let isGameOver = false;
+
     setGuesses(prev => {
         const updated = [...prev, newGuessObj];
         
         // Check Win/Loss
         if (guessWord === targetWord) {
             setGameStatus(GameStatus.WON);
+            isGameOver = true;
             addToast(`Benar! Oleh @${user?.uniqueId || 'Kamu'}`);
+            
+            // Trigger Praise
+            const praises = PRAISE_WORDS[language];
+            const randomPraise = praises[Math.floor(Math.random() * praises.length)];
+            setPraise(randomPraise);
+
         } else if (updated.length >= MAX_GUESSES) {
             setGameStatus(GameStatus.LOST);
+            isGameOver = true;
             addToast(`Game Over! Kata: ${targetWord}`);
-            
-            // Auto restart for tiktok live flow
-            if (isConnected) {
-                setTimeout(() => {
-                  // Only restart if the user hasn't manually restarted already
-                  isProcessingRef.current = false; 
-                  initGame();
-                }, 5000);
-            }
         }
 
         return updated;
@@ -121,13 +163,23 @@ const App: React.FC = () => {
 
     setCurrentGuess('');
     
-    // Unlock after animation (approx 1.5s)
+    // Auto restart logic (independent of queue processing)
+    if (isGameOver && isConnected) {
+        setTimeout(() => {
+          isProcessingRef.current = false; 
+          initGame();
+        }, 5000);
+    }
+
+    // Unlock and process next item after animation
     setTimeout(() => {
-        // Only unlock if game isn't over, otherwise we keep it locked until restart
-        if (guessWord !== targetWord && guesses.length < MAX_GUESSES - 1) {
+        // Only unlock if game isn't over
+        if (!isGameOver) {
             isProcessingRef.current = false;
+            // Recursively call queue processor
+            processQueue();
         }
-    }, 1500);
+    }, ANIMATION_DELAY);
   };
 
   // --- TIKTOK LOGIC & HANDLERS ---
@@ -137,20 +189,27 @@ const App: React.FC = () => {
   const handleTikTokGuess = (msg: TikTokChatEvent) => {
       // Logic for processing a chat message
       if (gameStatus !== GameStatus.PLAYING) return;
-      if (isProcessingRef.current) return; // Ignore if currently animating a guess
-
+      
       const cleanGuess = msg.comment.trim().toUpperCase();
       
       // Strict validation for automated inputs
       if (!/^[A-Z]+$/.test(cleanGuess)) return;
       if (cleanGuess.length !== wordLength) return;
       
-      processGuess(cleanGuess, {
-        userId: msg.userId,
-        uniqueId: msg.uniqueId,
-        nickname: msg.nickname,
-        profilePictureUrl: msg.profilePictureUrl
+      // Add to Queue instead of processing immediately
+      guessQueueRef.current.push({
+        word: cleanGuess,
+        user: {
+          userId: msg.userId,
+          uniqueId: msg.uniqueId,
+          nickname: msg.nickname,
+          profilePictureUrl: msg.profilePictureUrl
+        }
       });
+      setQueueLength(guessQueueRef.current.length);
+
+      // Attempt to process queue
+      processQueue();
   };
 
   const handleTikTokMember = (msg: TikTokMemberEvent) => {
@@ -337,6 +396,29 @@ const App: React.FC = () => {
             </div>
           ))}
         </div>
+        
+        {/* Queue Indicator */}
+        {queueLength > 0 && (
+           <div className="absolute top-20 left-4 z-30 bg-zinc-900/80 backdrop-blur-md px-3 py-1.5 rounded-lg border border-white/10 flex items-center gap-2 animate-fade-in shadow-lg">
+               <Layers size={14} className="text-indigo-400 animate-pulse" />
+               <span className="text-[10px] font-bold text-zinc-300">ANTRIAN: <span className="text-white">{queueLength}</span></span>
+           </div>
+        )}
+
+        {/* PRAISE OVERLAY */}
+        {praise && (
+          <div className="absolute inset-0 z-40 flex items-center justify-center pointer-events-none">
+             <div className="animate-pop text-center relative">
+                {/* Glow Effect */}
+                <div className="absolute inset-0 bg-amber-500/20 blur-[60px] rounded-full animate-pulse-slow"></div>
+                
+                {/* Main Text */}
+                <h1 className="relative text-5xl md:text-7xl font-black text-transparent bg-clip-text bg-gradient-to-b from-yellow-200 via-amber-400 to-orange-500 drop-shadow-[0_4px_10px_rgba(0,0,0,0.8)] tracking-tighter transform -rotate-2 scale-110 shadow-amber-500/50">
+                   {praise}
+                </h1>
+             </div>
+          </div>
+        )}
 
         {/* Grid */}
         <Grid 
