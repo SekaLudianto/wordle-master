@@ -62,6 +62,7 @@ const App: React.FC = () => {
   const [isWaitingForRestart, setIsWaitingForRestart] = useState(false);
   const [currentRestartCoins, setCurrentRestartCoins] = useState(0);
   const [currentRestartLikes, setCurrentRestartLikes] = useState(0);
+  const baselineLikeCountRef = useRef<number | null>(null); // To track accurate likes
 
   // Queue System
   const [queueLength, setQueueLength] = useState(0);
@@ -91,6 +92,10 @@ const App: React.FC = () => {
 
   const initGame = useCallback(async () => {
     setLoading(true);
+    // Clear Queue completely to ensure a clean start immediately
+    guessQueueRef.current = [];
+    setQueueLength(0);
+
     setGameStatus(GameStatus.PLAYING);
     setGuesses([]);
     setUserGuessCounts({});
@@ -99,14 +104,11 @@ const App: React.FC = () => {
     setPraise(null);
     setWinner(null);
     
-    // Clear Queue completely to ensure a clean start
-    guessQueueRef.current = [];
-    setQueueLength(0);
-    
     // Reset restart counters
     setIsWaitingForRestart(false);
     setCurrentRestartCoins(0);
     setCurrentRestartLikes(0);
+    baselineLikeCountRef.current = null; // Reset baseline
 
     isProcessingRef.current = false;
     
@@ -125,6 +127,9 @@ const App: React.FC = () => {
     } catch (e) {
       addToast('Error loading dictionary', 'error');
     } finally {
+      // Ensure queue is empty again before enabling inputs, just in case
+      guessQueueRef.current = []; 
+      setQueueLength(0);
       setLoading(false);
     }
   }, [language, wordLength]);
@@ -155,14 +160,8 @@ const App: React.FC = () => {
   // AUTO RESTART / WAITING LOGIC
   useEffect(() => {
     if (gameStatus === GameStatus.WON || gameStatus === GameStatus.LOST) {
-      // Show praise/mock for a few seconds, then switch to waiting mode
-      const timer = setTimeout(() => {
-         // Clear the praise text so the waiting overlay can take center stage (or show underneath)
-         // Actually, let's keep praise text but show the restart overlay ON TOP
-         setIsWaitingForRestart(true);
-      }, 4000); 
-      
-      return () => clearTimeout(timer);
+      // Set Waiting immediately so likes/gifts count during animation
+      setIsWaitingForRestart(true);
     }
   }, [gameStatus]);
 
@@ -171,8 +170,9 @@ const App: React.FC = () => {
       if (isWaitingForRestart) {
           // If targets are set to 0, auto restart immediately
           if (restartCoinTarget === 0 && restartLikeTarget === 0) {
-              initGame();
-              return;
+              // Add small delay if coming from game over to let users see result briefly
+              const timer = setTimeout(() => initGame(), 4000);
+              return () => clearTimeout(timer);
           }
 
           if (currentRestartCoins >= restartCoinTarget || currentRestartLikes >= restartLikeTarget) {
@@ -249,8 +249,13 @@ const App: React.FC = () => {
   // --- TIKTOK LOGIC & HANDLERS ---
 
   const handleTikTokGuess = (msg: TikTokChatEvent) => {
-      // STOP accepting new guesses if we are waiting for restart (LOCKED state)
-      if (isWaitingForRestart) return;
+      // STRICT BLOCKING:
+      // 1. If waiting for restart (Next Round Locked)
+      // 2. If loading new game (Dictionary fetch phase)
+      // 3. If game is NOT playing (Winning/Losing animation phase)
+      if (isWaitingForRestart || loading || gameStatus !== GameStatus.PLAYING) {
+          return;
+      }
 
       if (guessQueueRef.current.length > 50) return;
       const potentialWords = msg.comment.toUpperCase().split(/[^A-Z]+/);
@@ -285,15 +290,6 @@ const App: React.FC = () => {
   const handleTikTokGift = (msg: TikTokGiftEvent) => {
       // Only count if waiting for restart
       if (isWaitingForRestart) {
-          // Calculate total value of this gift event
-          // Note: repeatCount increases in a streak, but usually we just want to add the incoming value
-          // A simple approximation for restart purposes is adding diamondCount. 
-          // Ideally we check if it's the end of streak, but for immediate reaction, let's just add.
-          // Since Gift Event fires repeatedly for streaks, we might overcount if we sum repeats.
-          // Correct way for streaks: The library fires separate events. 
-          // For simplicity in this game loop: simple addition of diamondCount is usually enough for "1 Coin" triggers.
-          
-          // If cost is 0, we can assume it's free or skip.
           if(msg.diamondCount > 0) {
              setCurrentRestartCoins(prev => prev + msg.diamondCount);
           }
@@ -302,8 +298,27 @@ const App: React.FC = () => {
 
   const handleTikTokLike = (msg: TikTokLikeEvent) => {
       if (isWaitingForRestart) {
-          // msg.likeCount is the number of likes in this specific batch
-          setCurrentRestartLikes(prev => prev + msg.likeCount);
+          const currentTotal = Number(msg.totalLikeCount);
+          const thisBatch = Number(msg.likeCount);
+
+          // If baseline not set, set it now. 
+          // We subtract thisBatch to approximate the count BEFORE this event arrived, 
+          // or just use currentTotal as baseline for next events.
+          // To be safe and capture THIS event, we set baseline = total - batch.
+          if (baselineLikeCountRef.current === null) {
+              baselineLikeCountRef.current = currentTotal - thisBatch;
+          }
+
+          // Calculate accumulated likes since we started waiting
+          const likesSinceStart = currentTotal - (baselineLikeCountRef.current || 0);
+          
+          // Safety check: if totalLikeCount is reported as 0 (bug) or negative diff, fallback to additive
+          if (currentTotal > 0 && likesSinceStart >= 0) {
+              setCurrentRestartLikes(likesSinceStart);
+          } else {
+               // Fallback to additive if total is not reliable
+               setCurrentRestartLikes(prev => prev + thisBatch);
+          }
       }
   };
 
@@ -382,6 +397,26 @@ const App: React.FC = () => {
   }, [initGame]);
 
   const letterOptions = Array.from({ length: 12 }, (_, i) => i + 4);
+  
+  // UI Logic for Overlay Delay
+  // We want to show the "Result" (Win/Loss) for at least 3-4 seconds before overlaying the "LOCKED" screen.
+  // But we want to COUNT likes immediately.
+  const [showRestartOverlay, setShowRestartOverlay] = useState(false);
+
+  useEffect(() => {
+    let timer: any;
+    if (isWaitingForRestart && (restartCoinTarget > 0 || restartLikeTarget > 0)) {
+       // Wait 4.5 seconds before showing the 'LOCKED' overlay UI
+       // This allows the praise/mockery animation to finish
+       timer = setTimeout(() => {
+           setShowRestartOverlay(true);
+       }, 4500);
+    } else {
+       setShowRestartOverlay(false);
+    }
+    return () => clearTimeout(timer);
+  }, [isWaitingForRestart, restartCoinTarget, restartLikeTarget]);
+
 
   return (
     <div className="flex flex-col h-full w-full bg-background relative overflow-hidden">
@@ -414,7 +449,7 @@ const App: React.FC = () => {
       </div>
 
       {/* RESTART REQUIRED OVERLAY */}
-      {isWaitingForRestart && (restartCoinTarget > 0 || restartLikeTarget > 0) && (
+      {showRestartOverlay && (
         <div className="absolute inset-0 z-[55] flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in p-6">
            <div className="bg-zinc-900/90 w-full max-w-md p-6 rounded-3xl border border-zinc-700 shadow-[0_0_50px_rgba(0,0,0,0.5)] flex flex-col items-center gap-6">
               
@@ -464,7 +499,7 @@ const App: React.FC = () => {
       )}
 
       {/* PRAISE & WINNER OVERLAY */}
-      {praise && !isWaitingForRestart && (
+      {praise && !showRestartOverlay && (
          <div className="absolute inset-0 z-50 flex flex-col items-center justify-center pointer-events-none bg-black/60 backdrop-blur-[6px] animate-fade-in gap-6 p-4">
              {gameStatus === GameStatus.WON ? (
                 <>
