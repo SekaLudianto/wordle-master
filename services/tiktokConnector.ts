@@ -1,5 +1,6 @@
+
 import { io } from 'socket.io-client';
-import { TikTokChatEvent, TikTokMemberEvent } from '../types';
+import { TikTokChatEvent, TikTokMemberEvent, TikTokGiftEvent, TikTokLikeEvent } from '../types';
 
 // Connects to the hosted Node.js server
 const BACKEND_URL = "https://buat-lev.up.railway.app";
@@ -75,6 +76,28 @@ class TikTokConnector {
     if (!this.socket) return;
     if (callback) this.socket.off('member', callback);
     else this.socket.off('member');
+  }
+
+  onGift(callback: (msg: TikTokGiftEvent) => void) {
+    if (!this.socket) return;
+    this.socket.on('gift', callback);
+  }
+
+  offGift(callback?: (msg: TikTokGiftEvent) => void) {
+    if (!this.socket) return;
+    if (callback) this.socket.off('gift', callback);
+    else this.socket.off('gift');
+  }
+
+  onLike(callback: (msg: TikTokLikeEvent) => void) {
+    if (!this.socket) return;
+    this.socket.on('like', callback);
+  }
+
+  offLike(callback?: (msg: TikTokLikeEvent) => void) {
+    if (!this.socket) return;
+    if (callback) this.socket.off('like', callback);
+    else this.socket.off('like');
   }
 
   onConnected(callback: (state: any) => void) {

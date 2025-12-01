@@ -1,3 +1,4 @@
+
 export type Language = 'EN' | 'ID';
 
 export enum GameStatus {
@@ -50,4 +51,26 @@ export interface TikTokMemberEvent {
   nickname: string;
   profilePictureUrl: string;
   label: string; // e.g., "joined"
+}
+
+export interface TikTokGiftEvent {
+  giftId: number;
+  repeatCount: number;
+  diamondCount: number; // Cost in coins
+  userId: string;
+  uniqueId: string;
+  nickname: string;
+  profilePictureUrl: string;
+  giftName: string;
+  giftType: number;
+}
+
+export interface TikTokLikeEvent {
+  likeCount: number;
+  totalLikeCount: number;
+  userId: string;
+  uniqueId: string;
+  nickname: string;
+  profilePictureUrl: string;
+  label: string;
 }
