@@ -1,10 +1,10 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Settings, RefreshCw, Trophy, Globe, X, Radio, Link as LinkIcon, User, Layers, Users, LayoutGrid, AlertCircle, CheckCircle, KeyRound, Gift, Heart, Lock } from 'lucide-react';
+import { Settings, RefreshCw, Trophy, Globe, X, Radio, Link as LinkIcon, User, Layers, Users, LayoutGrid, AlertCircle, CheckCircle, KeyRound, Gift, Heart, Lock, Wifi, WifiOff, PlugZap, Move, ZoomIn, ZoomOut } from 'lucide-react';
 import { fetchDictionary, getRandomWord, isValidWord } from './services/wordService';
 import { tiktokService } from './services/tiktokConnector';
 import Grid from './components/Grid';
-import { DictionaryData, GameStatus, GuessData, Language, TikTokChatEvent, TikTokMemberEvent, ToastMessage, TikTokUserData, TikTokGiftEvent, TikTokLikeEvent } from './types';
+import { DictionaryData, GameStatus, GuessData, Language, TikTokChatEvent, TikTokMemberEvent, TikTokGiftEvent, TikTokLikeEvent, ToastMessage, TikTokUserData } from './types';
 
 // Praise dictionary
 const PRAISE_WORDS: Record<Language, string[]> = {
@@ -16,6 +16,27 @@ const PRAISE_WORDS: Record<Language, string[]> = {
 const MOCK_MESSAGES: Record<Language, string[]> = {
   ID: ['YAHHH KALAH 😜', 'COBA LAGI YA 😛', 'BELUM BERUNTUNG 🤪', 'ADUH SAYANG SEKALI 😝', 'KURANG JAGO NIHH 😜', 'UPS, GAGAL DEH 🫠'],
   EN: ['OOPS, YOU LOST 😜', 'NICE TRY THOUGH 😛', 'BETTER LUCK NEXT TIME 🤪', 'SO CLOSE! 😝', 'NOT QUITE RIGHT 😜', 'GAME OVER 🫠']
+};
+
+// Funny Reconnect Messages
+const RECONNECT_JOKES: Record<Language, string[]> = {
+  ID: [
+    'SABAR WOY, KABELNYA KESANDUNG KUCING 🐈', 
+    'LAGI NYARI SINYAL DI ATAS GENTENG 📡', 
+    'SERVERNYA NGAMBEK, BENTAR YA 🙏', 
+    'ADMIN LAGI NYOLONG WIFI TETANGGA 🤫', 
+    'JANGAN KABUR DULU, INI LAGI DIURUS! 🔧',
+    'INTERNETNYA LAGI TARIK NAPAS 😮‍💨',
+    'LOADING... JANGAN LUPA KEDIP 👁️'
+  ],
+  EN: [
+    'HOLD ON, FEEDING THE SERVER HAMSTERS 🐹', 
+    'SEARCHING FOR SIGNAL ON MARS 🚀', 
+    'SERVER IS TAKING A NAP, WAKING IT UP... 😴', 
+    'WHO TRIPPED OVER THE CABLE?! 🔌', 
+    'RECONNECTING... DON\'T PANIC! 😱',
+    'WAITING FOR WIFI GODS TO BLESS US 🙏'
+  ]
 };
 
 const App: React.FC = () => {
@@ -34,10 +55,19 @@ const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [showConnect, setShowConnect] = useState(false);
   
+  // Layout / Drag State
+  const [isDragMode, setIsDragMode] = useState(false);
+  const [gridPosition, setGridPosition] = useState({ x: 0, y: 0 });
+  const [scale, setScale] = useState(1);
+  const dragStartPos = useRef({ x: 0, y: 0 });
+  const gridStartPos = useRef({ x: 0, y: 0 });
+  
   // TikTok State
   const [tiktokUsername, setTiktokUsername] = useState('');
   const [tiktokSessionId, setTiktokSessionId] = useState('');
   const [isConnected, setIsConnected] = useState(false);
+  const [isReconnecting, setIsReconnecting] = useState(false); 
+  const [reconnectJoke, setReconnectJoke] = useState(''); // New State for funny message
   const [connectionStatus, setConnectionStatus] = useState<string>('Disconnected');
   const [recentJoins, setRecentJoins] = useState<(TikTokMemberEvent & { id: number })[]>([]);
 
@@ -62,7 +92,7 @@ const App: React.FC = () => {
   const [isWaitingForRestart, setIsWaitingForRestart] = useState(false);
   const [currentRestartCoins, setCurrentRestartCoins] = useState(0);
   const [currentRestartLikes, setCurrentRestartLikes] = useState(0);
-  const baselineLikeCountRef = useRef<number | null>(null); // To track accurate likes
+  const baselineLikeCountRef = useRef<number | null>(null); 
 
   // Queue System
   const [queueLength, setQueueLength] = useState(0);
@@ -250,9 +280,6 @@ const App: React.FC = () => {
 
   const handleTikTokGuess = (msg: TikTokChatEvent) => {
       // STRICT BLOCKING:
-      // 1. If waiting for restart (Next Round Locked)
-      // 2. If loading new game (Dictionary fetch phase)
-      // 3. If game is NOT playing (Winning/Losing animation phase)
       if (isWaitingForRestart || loading || gameStatus !== GameStatus.PLAYING) {
           return;
       }
@@ -301,22 +328,15 @@ const App: React.FC = () => {
           const currentTotal = Number(msg.totalLikeCount);
           const thisBatch = Number(msg.likeCount);
 
-          // If baseline not set, set it now. 
-          // We subtract thisBatch to approximate the count BEFORE this event arrived, 
-          // or just use currentTotal as baseline for next events.
-          // To be safe and capture THIS event, we set baseline = total - batch.
           if (baselineLikeCountRef.current === null) {
               baselineLikeCountRef.current = currentTotal - thisBatch;
           }
 
-          // Calculate accumulated likes since we started waiting
           const likesSinceStart = currentTotal - (baselineLikeCountRef.current || 0);
           
-          // Safety check: if totalLikeCount is reported as 0 (bug) or negative diff, fallback to additive
           if (currentTotal > 0 && likesSinceStart >= 0) {
               setCurrentRestartLikes(likesSinceStart);
           } else {
-               // Fallback to additive if total is not reliable
                setCurrentRestartLikes(prev => prev + thisBatch);
           }
       }
@@ -336,6 +356,14 @@ const App: React.FC = () => {
     handleTikTokLikeRef.current = handleTikTokLike;
   });
 
+  // Reconnection Effect
+  useEffect(() => {
+    if (isReconnecting) {
+        const jokes = RECONNECT_JOKES[language];
+        setReconnectJoke(jokes[Math.floor(Math.random() * jokes.length)]);
+    }
+  }, [isReconnecting, language]);
+
   // SETUP SOCKET
   useEffect(() => {
     tiktokService.connectToBackend();
@@ -347,6 +375,7 @@ const App: React.FC = () => {
 
     const onConnected = (state: any) => {
       setIsConnected(true);
+      setIsReconnecting(false);
       setConnectionStatus(`Connected to room ${state.roomId}`);
       addToast('Terhubung ke TikTok Live!', 'success');
     };
@@ -354,15 +383,39 @@ const App: React.FC = () => {
     const onDisconnected = (msg: string) => {
       setIsConnected(false);
       setConnectionStatus('Disconnected');
-      addToast('Koneksi terputus.', 'error');
+    };
+
+    const onReconnecting = () => {
+        setIsReconnecting(true);
+        setConnectionStatus('Reconnecting...');
+    };
+
+    const onReconnectSuccess = () => {
+        setIsReconnecting(false);
+        setIsConnected(true);
+        setConnectionStatus('Reconnected!');
+        addToast('Koneksi pulih!', 'success');
+    };
+
+    const onReconnectFailed = () => {
+        setIsReconnecting(false);
+        setIsConnected(false);
+        setConnectionStatus('Connection Failed');
+        addToast('Gagal menyambung ulang.', 'error');
     };
 
     tiktokService.onChat(onChat);
     tiktokService.onMember(onMember);
     tiktokService.onGift(onGift);
     tiktokService.onLike(onLike);
+    
+    // Connection Events
     tiktokService.onConnected(onConnected);
     tiktokService.onDisconnected(onDisconnected);
+    tiktokService.onReconnecting(onReconnecting);
+    tiktokService.onReconnectSuccess(onReconnectSuccess);
+    tiktokService.onReconnectFailed(onReconnectFailed);
+    
     tiktokService.onError((err) => {
         console.error("Socket error:", err);
         if(err.includes("websocket upgrade") || err.includes("sessionId")) {
@@ -396,18 +449,45 @@ const App: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [initGame]);
 
+  // --- DRAG / LAYOUT LOGIC ---
+  
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isDragMode) return;
+    const target = e.currentTarget;
+    target.setPointerCapture(e.pointerId);
+    dragStartPos.current = { x: e.clientX, y: e.clientY };
+    gridStartPos.current = { x: gridPosition.x, y: gridPosition.y };
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isDragMode || !e.currentTarget.hasPointerCapture(e.pointerId)) return;
+    
+    const dx = e.clientX - dragStartPos.current.x;
+    const dy = e.clientY - dragStartPos.current.y;
+    
+    // Logic: moving 1px on screen should move the element 1px on screen, regardless of scale.
+    // If the transform order is translate then scale, we usually need to divide by scale.
+    // But if we are translating the same element that is scaled, it depends on transform origin.
+    // Standard approach for intuitive dragging of scaled elements:
+    setGridPosition({
+      x: gridStartPos.current.x + dx,
+      y: gridStartPos.current.y + dy
+    });
+  };
+
+  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isDragMode) return;
+    e.currentTarget.releasePointerCapture(e.pointerId);
+  };
+
+
   const letterOptions = Array.from({ length: 12 }, (_, i) => i + 4);
   
-  // UI Logic for Overlay Delay
-  // We want to show the "Result" (Win/Loss) for at least 3-4 seconds before overlaying the "LOCKED" screen.
-  // But we want to COUNT likes immediately.
   const [showRestartOverlay, setShowRestartOverlay] = useState(false);
 
   useEffect(() => {
     let timer: any;
     if (isWaitingForRestart && (restartCoinTarget > 0 || restartLikeTarget > 0)) {
-       // Wait 4.5 seconds before showing the 'LOCKED' overlay UI
-       // This allows the praise/mockery animation to finish
        timer = setTimeout(() => {
            setShowRestartOverlay(true);
        }, 4500);
@@ -417,6 +497,25 @@ const App: React.FC = () => {
     return () => clearTimeout(timer);
   }, [isWaitingForRestart, restartCoinTarget, restartLikeTarget]);
 
+
+  // Helper for Header Badge Color
+  const getBadgeStyle = () => {
+      if (isReconnecting) return 'bg-amber-500/20 text-amber-400 border border-amber-500/30 animate-pulse';
+      if (isConnected) return 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
+      return 'bg-rose-500/20 text-rose-400 border border-rose-500/30';
+  };
+  
+  const getBadgeText = () => {
+      if (isReconnecting) return 'RECONNECTING...';
+      if (isConnected) return 'LIVE';
+      return 'CONNECT TIKTOK';
+  };
+
+  const getBadgeDot = () => {
+      if (isReconnecting) return 'bg-amber-500 animate-ping';
+      if (isConnected) return 'bg-emerald-500';
+      return 'bg-rose-500';
+  };
 
   return (
     <div className="flex flex-col h-full w-full bg-background relative overflow-hidden">
@@ -447,6 +546,22 @@ const App: React.FC = () => {
           </div>
         ))}
       </div>
+
+      {/* RECONNECTING OVERLAY (FUNNY) */}
+      {isReconnecting && (
+        <div className="absolute inset-0 z-[70] bg-amber-600/90 backdrop-blur-md flex flex-col items-center justify-center p-8 animate-fade-in text-center">
+            <WifiOff size={100} className="text-white mb-6 animate-shake" />
+            <h1 className="text-4xl sm:text-6xl font-black text-white uppercase tracking-tighter drop-shadow-xl mb-4 leading-tight">
+              {reconnectJoke}
+            </h1>
+            <div className="flex items-center gap-2 text-white/80 font-bold bg-black/20 px-4 py-2 rounded-full mt-4">
+               <div className="w-3 h-3 bg-white rounded-full animate-bounce"></div>
+               <div className="w-3 h-3 bg-white rounded-full animate-bounce delay-100"></div>
+               <div className="w-3 h-3 bg-white rounded-full animate-bounce delay-200"></div>
+               <span className="ml-2">TRYING TO RECONNECT</span>
+            </div>
+        </div>
+      )}
 
       {/* RESTART REQUIRED OVERLAY */}
       {showRestartOverlay && (
@@ -531,9 +646,9 @@ const App: React.FC = () => {
       {/* HEADER */}
       <header className="flex-none p-4 flex items-center justify-between bg-zinc-900/50 border-b border-white/5 backdrop-blur-md z-30">
         <div className="flex items-center gap-3">
-           <button onClick={() => setShowConnect(true)} className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold transition-all ${isConnected ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-400 border border-rose-500/30 animate-pulse'}`}>
-              <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-              {isConnected ? 'LIVE' : 'CONNECT TIKTOK'}
+           <button onClick={() => setShowConnect(true)} className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold transition-all ${getBadgeStyle()}`}>
+              <div className={`w-2 h-2 rounded-full ${getBadgeDot()}`} />
+              {getBadgeText()}
            </button>
            {queueLength > 0 && (
               <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-indigo-500/20 border border-indigo-500/30">
@@ -544,6 +659,24 @@ const App: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2">
+           {/* ZOOM CONTROLS */}
+           <div className="flex items-center bg-zinc-800 rounded-full p-1 mr-2">
+              <button onClick={() => setScale(s => Math.max(0.5, s - 0.1))} className="p-1.5 rounded-full hover:bg-zinc-700 text-zinc-400 hover:text-white transition-colors">
+                  <ZoomOut size={16} />
+              </button>
+              <span className="text-[10px] font-bold text-zinc-500 w-8 text-center">{Math.round(scale * 100)}%</span>
+              <button onClick={() => setScale(s => Math.min(2.0, s + 0.1))} className="p-1.5 rounded-full hover:bg-zinc-700 text-zinc-400 hover:text-white transition-colors">
+                  <ZoomIn size={16} />
+              </button>
+           </div>
+
+           <button 
+              onClick={() => setIsDragMode(!isDragMode)} 
+              className={`p-2 rounded-full transition-all ${isDragMode ? 'bg-indigo-500 text-white shadow-[0_0_15px_rgba(99,102,241,0.5)] animate-pulse' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white'}`}
+              title={isDragMode ? "Lock Position" : "Adjust Layout"}
+           >
+             <Move size={20} />
+           </button>
            <button onClick={initGame} disabled={loading} className="p-2 rounded-full bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white transition-colors">
              <RefreshCw size={20} className={loading ? 'animate-spin' : ''} />
            </button>
@@ -560,7 +693,25 @@ const App: React.FC = () => {
              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500"></div>
            </div>
         ) : (
-          <Grid guesses={guesses} currentGuess={currentGuess} targetWord={targetWord} wordLength={wordLength} maxGuesses={maxGuesses} isShake={shake} />
+          <div 
+             className={`flex-1 w-full h-full flex flex-col justify-center transition-transform duration-75 relative ${isDragMode ? 'cursor-move touch-none' : ''}`}
+             onPointerDown={handlePointerDown}
+             onPointerMove={handlePointerMove}
+             onPointerUp={handlePointerUp}
+             onPointerCancel={handlePointerUp}
+             style={{
+               transform: `translate(${gridPosition.x}px, ${gridPosition.y}px) scale(${scale})`
+             }}
+          >
+             {isDragMode && (
+               <div className="absolute inset-4 border-2 border-dashed border-indigo-500/50 rounded-3xl z-0 flex items-center justify-center pointer-events-none">
+                  <span className="bg-zinc-900/80 px-4 py-2 rounded-lg text-indigo-400 font-bold backdrop-blur-md">
+                     DRAG TO ADJUST
+                  </span>
+               </div>
+             )}
+             <Grid guesses={guesses} currentGuess={currentGuess} targetWord={targetWord} wordLength={wordLength} maxGuesses={maxGuesses} isShake={shake} />
+          </div>
         )}
       </main>
 
@@ -645,6 +796,13 @@ const App: React.FC = () => {
                       <p className="text-[10px] text-zinc-500 italic">*Set both to 0 for instant auto-restart.</p>
                   </div>
               </div>
+              
+              {/* LAYOUT RESET */}
+              <div className="pt-4 border-t border-zinc-800">
+                 <button onClick={() => { setGridPosition({x:0, y:0}); setScale(1); }} className="text-xs font-bold text-zinc-500 hover:text-white underline w-full text-center">
+                    Reset Layout Position
+                 </button>
+              </div>
 
             </div>
 
@@ -692,7 +850,7 @@ const App: React.FC = () => {
                 <button type="submit" className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl transition-colors shadow-lg shadow-emerald-500/20">Connect Live</button>
               </div>
               <div className="text-center">
-                 <p className={`text-xs font-medium ${isConnected ? 'text-emerald-400' : 'text-zinc-500'}`}>Status: {connectionStatus}</p>
+                 <p className={`text-xs font-medium ${isReconnecting ? 'text-amber-400 animate-pulse' : isConnected ? 'text-emerald-400' : 'text-zinc-500'}`}>Status: {connectionStatus}</p>
               </div>
             </form>
           </div>

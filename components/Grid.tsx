@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { GuessData, LetterStatus, TikTokUserData } from '../types';
 import { User } from 'lucide-react';
@@ -110,11 +111,13 @@ const AvatarDisplay: React.FC<{ user?: TikTokUserData }> = ({ user }) => {
 // RIGHT SIDE: Nickname Info
 const InfoDisplay: React.FC<{ user?: TikTokUserData }> = ({ user }) => {
   if (!user) {
-     return <div className="w-16 sm:w-28 flex-shrink-0"></div>; // Placeholder
+     // Increased width placeholders to match the new wider column
+     return <div className="w-24 sm:w-40 flex-shrink-0"></div>; 
   }
 
   return (
-    <div className="w-16 sm:w-28 flex-shrink-0 flex flex-col justify-center animate-fade-in pl-1 sm:pl-2 overflow-hidden">
+    // DRAMATICALLY INCREASED WIDTH here (w-24 sm:w-40) to prevent truncation
+    <div className="w-24 sm:w-40 flex-shrink-0 flex flex-col justify-center animate-fade-in pl-1 sm:pl-2 overflow-hidden">
         <span className="text-[10px] sm:text-xs text-white font-bold truncate w-full leading-tight drop-shadow-md text-left">
           {user.nickname}
         </span>
@@ -176,7 +179,7 @@ const Grid: React.FC<GridProps> = ({ guesses, currentGuess, targetWord, wordLeng
               ))}
             </div>
              
-             <div className="w-16 sm:w-28 flex-shrink-0"></div> {/* Right Placeholder */}
+             <div className="w-24 sm:w-40 flex-shrink-0"></div> {/* Right Placeholder (Updated Width) */}
           </div>
         )}
 
@@ -191,7 +194,7 @@ const Grid: React.FC<GridProps> = ({ guesses, currentGuess, targetWord, wordLeng
               ))}
             </div>
              
-             <div className="w-16 sm:w-28 flex-shrink-0"></div> {/* Right Placeholder */}
+             <div className="w-24 sm:w-40 flex-shrink-0"></div> {/* Right Placeholder (Updated Width) */}
           </div>
         ))}
       </div>

@@ -16,8 +16,11 @@ class TikTokConnector {
     if (this.socket?.connected) return;
 
     this.socket = io(BACKEND_URL, {
-      reconnectionAttempts: 5,
-      reconnectionDelay: 1000,
+      reconnection: true,
+      reconnectionAttempts: 30, // Try 30 times before giving up
+      reconnectionDelay: 2000,  // Wait 2 seconds
+      reconnectionDelayMax: 5000, // Max wait 5 seconds
+      timeout: 20000,
     });
 
     this.socket.on('connect', () => {
@@ -27,8 +30,10 @@ class TikTokConnector {
       }
     });
 
-    this.socket.on('disconnect', () => {
-      console.warn("Socket disconnected!");
+    this.socket.on('disconnect', (reason: string) => {
+      console.warn("Socket disconnected:", reason);
+      // If the disconnect was initiated by the server or manual, we might need to handle it.
+      // But for 'transport close' or 'ping timeout', socket.io handles auto-reconnect.
     });
   }
 
@@ -113,6 +118,22 @@ class TikTokConnector {
   onError(callback: (err: string) => void) {
       if(!this.socket) return;
       this.socket.on('tiktokDisconnected', callback);
+  }
+
+  // New methods for reconnection status
+  onReconnecting(callback: (attempt: number) => void) {
+    if (!this.socket) return;
+    this.socket.io.on("reconnect_attempt", callback);
+  }
+
+  onReconnectFailed(callback: () => void) {
+    if (!this.socket) return;
+    this.socket.io.on("reconnect_failed", callback);
+  }
+
+  onReconnectSuccess(callback: () => void) {
+    if (!this.socket) return;
+    this.socket.io.on("reconnect", callback);
   }
 
   disconnect() {
