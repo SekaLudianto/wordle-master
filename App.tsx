@@ -1,21 +1,58 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Settings, RefreshCw, Trophy, Globe, X, Radio, Link as LinkIcon, User, Layers, Users, LayoutGrid, AlertCircle, CheckCircle, KeyRound, Gift, Heart, Lock, Wifi, WifiOff, PlugZap, Move, ZoomIn, ZoomOut } from 'lucide-react';
+import { Settings, RefreshCw, Trophy, Globe, X, Radio, Link as LinkIcon, User, Layers, Users, LayoutGrid, AlertCircle, CheckCircle, KeyRound, Gift, Heart, Lock, Wifi, WifiOff, PlugZap, Move, ZoomIn, ZoomOut, Crown, Medal } from 'lucide-react';
 import { fetchDictionary, getRandomWord, isValidWord } from './services/wordService';
 import { tiktokService } from './services/tiktokConnector';
 import Grid from './components/Grid';
-import { DictionaryData, GameStatus, GuessData, Language, TikTokChatEvent, TikTokMemberEvent, TikTokGiftEvent, TikTokLikeEvent, ToastMessage, TikTokUserData } from './types';
+import { DictionaryData, GameStatus, GuessData, Language, TikTokChatEvent, TikTokMemberEvent, TikTokGiftEvent, TikTokLikeEvent, ToastMessage, TikTokUserData, PlayerScore } from './types';
+
+interface MessageData {
+  text: string;
+  emoji: string;
+}
 
 // Praise dictionary
-const PRAISE_WORDS: Record<Language, string[]> = {
-  ID: ['LUAR BIASA!', 'SEMPURNA!', 'SANGAT HEBAT!', 'JENIUS!', 'MANTAP JIWA!', 'KEREN ABIS!', 'SENSASIONAL!', 'ISTIMEWA!'],
-  EN: ['MAGNIFICENT!', 'OUTSTANDING!', 'BRILLIANT!', 'PERFECT!', 'SPECTACULAR!', 'GENIUS!', 'UNSTOPPABLE!', 'AMAZING!']
+const PRAISE_WORDS: Record<Language, MessageData[]> = {
+  ID: [
+    { text: 'LUAR BIASA!', emoji: '🤩' },
+    { text: 'SEMPURNA!', emoji: '🔥' },
+    { text: 'SANGAT HEBAT!', emoji: '💪' },
+    { text: 'JENIUS!', emoji: '🧠' },
+    { text: 'MANTAP JIWA!', emoji: '😎' },
+    { text: 'KEREN ABIS!', emoji: '✨' },
+    { text: 'SENSASIONAL!', emoji: '🌟' },
+    { text: 'ISTIMEWA!', emoji: '🎉' }
+  ],
+  EN: [
+    { text: 'MAGNIFICENT!', emoji: '🤩' },
+    { text: 'OUTSTANDING!', emoji: '🔥' },
+    { text: 'BRILLIANT!', emoji: '💎' },
+    { text: 'PERFECT!', emoji: '✨' },
+    { text: 'SPECTACULAR!', emoji: '🌟' },
+    { text: 'GENIUS!', emoji: '🧠' },
+    { text: 'UNSTOPPABLE!', emoji: '🚀' },
+    { text: 'AMAZING!', emoji: '🎉' }
+  ]
 };
 
 // Mock/Tease dictionary for losing
-const MOCK_MESSAGES: Record<Language, string[]> = {
-  ID: ['YAHHH KALAH 😜', 'COBA LAGI YA 😛', 'BELUM BERUNTUNG 🤪', 'ADUH SAYANG SEKALI 😝', 'KURANG JAGO NIHH 😜', 'UPS, GAGAL DEH 🫠'],
-  EN: ['OOPS, YOU LOST 😜', 'NICE TRY THOUGH 😛', 'BETTER LUCK NEXT TIME 🤪', 'SO CLOSE! 😝', 'NOT QUITE RIGHT 😜', 'GAME OVER 🫠']
+const MOCK_MESSAGES: Record<Language, MessageData[]> = {
+  ID: [
+    { text: 'YAHHH KALAH', emoji: '😜' },
+    { text: 'COBA LAGI YA', emoji: '😛' },
+    { text: 'BELUM BERUNTUNG', emoji: '🤪' },
+    { text: 'ADUH SAYANG SEKALI', emoji: '😝' },
+    { text: 'KURANG JAGO NIHH', emoji: '😜' },
+    { text: 'UPS, GAGAL DEH', emoji: '🫠' }
+  ],
+  EN: [
+    { text: 'OOPS, YOU LOST', emoji: '😜' },
+    { text: 'NICE TRY THOUGH', emoji: '😛' },
+    { text: 'BETTER LUCK NEXT TIME', emoji: '🤪' },
+    { text: 'SO CLOSE!', emoji: '😝' },
+    { text: 'NOT QUITE RIGHT', emoji: '😜' },
+    { text: 'GAME OVER', emoji: '🫠' }
+  ]
 };
 
 // Funny Reconnect Messages
@@ -85,11 +122,17 @@ const App: React.FC = () => {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   
   // Praise & Winner State
-  const [praise, setPraise] = useState<string | null>(null);
+  const [praise, setPraise] = useState<MessageData | null>(null);
   const [winner, setWinner] = useState<TikTokUserData | null>(null);
+
+  // Leaderboard & Ranking State
+  const [leaderboard, setLeaderboard] = useState<PlayerScore[]>([]);
+  const [hostScore, setHostScore] = useState(0);
+  const [showLeaderboard, setShowLeaderboard] = useState(false);
 
   // Restart Logic State
   const [isWaitingForRestart, setIsWaitingForRestart] = useState(false);
+  const [showRestartOverlay, setShowRestartOverlay] = useState(false);
   const [currentRestartCoins, setCurrentRestartCoins] = useState(0);
   const [currentRestartLikes, setCurrentRestartLikes] = useState(0);
   const baselineLikeCountRef = useRef<number | null>(null); 
@@ -118,6 +161,36 @@ const App: React.FC = () => {
     }, 3000);
   };
 
+  // Helper to update leaderboard
+  const updateLeaderboard = (user: TikTokUserData, points: number) => {
+    setLeaderboard(prev => {
+      const existingUserIndex = prev.findIndex(p => p.userId === user.userId);
+      let newBoard = [...prev];
+      
+      if (existingUserIndex >= 0) {
+        newBoard[existingUserIndex] = {
+          ...newBoard[existingUserIndex],
+          score: newBoard[existingUserIndex].score + points,
+          wins: newBoard[existingUserIndex].wins + 1,
+          nickname: user.nickname, // Update latest nickname/pfp
+          profilePictureUrl: user.profilePictureUrl
+        };
+      } else {
+        newBoard.push({
+          userId: user.userId,
+          uniqueId: user.uniqueId,
+          nickname: user.nickname,
+          profilePictureUrl: user.profilePictureUrl,
+          score: points,
+          wins: 1
+        });
+      }
+      
+      // Sort by score desc, take top 10
+      return newBoard.sort((a, b) => b.score - a.score).slice(0, 10);
+    });
+  };
+
   // --- GAME INITIALIZATION ---
 
   const initGame = useCallback(async () => {
@@ -133,6 +206,8 @@ const App: React.FC = () => {
     setShake(false);
     setPraise(null);
     setWinner(null);
+    setShowLeaderboard(false);
+    setShowRestartOverlay(false);
     
     // Reset restart counters
     setIsWaitingForRestart(false);
@@ -187,34 +262,65 @@ const App: React.FC = () => {
     }
   }, [gameStatus, loading, targetWord, processQueue]);
 
-  // AUTO RESTART / WAITING LOGIC
+  // END GAME SEQUENCE MANAGER
   useEffect(() => {
     if (gameStatus === GameStatus.WON || gameStatus === GameStatus.LOST) {
-      // Set Waiting immediately so likes/gifts count during animation
+      // 1. Immediately start "Background" Waiting mode so gifts/likes count
       setIsWaitingForRestart(true);
+      setShowRestartOverlay(false); // Ensure overlay is hidden initially
+      
+      // NOTE: Praise logic is triggered via setTimeout inside processGuess to give a 1s delay
+      
+      // 2. Wait 5 seconds (1s delay + 4s view time) then show Leaderboard
+      const leaderboardTimer = setTimeout(() => {
+        setPraise(null);
+        setShowLeaderboard(true);
+      }, 5000); 
+
+      // 3. Wait another 6 seconds (Total 11s), hide Leaderboard
+      const restartTimer = setTimeout(() => {
+         setShowLeaderboard(false);
+         
+         // 4. CHECK TARGETS
+         // If targets are 0, Auto Restart. Else show Locked Overlay.
+         if (restartCoinTarget === 0 && restartLikeTarget === 0) {
+             initGame();
+         } else {
+             setShowRestartOverlay(true);
+         }
+      }, 11000); 
+
+      return () => {
+        clearTimeout(leaderboardTimer);
+        clearTimeout(restartTimer);
+      };
+    } else {
+        // Reset visuals if not won/lost
+        setShowRestartOverlay(false);
+        setShowLeaderboard(false);
+        setPraise(null);
     }
-  }, [gameStatus]);
+  }, [gameStatus, restartCoinTarget, restartLikeTarget, initGame]);
 
-  // Check if restart targets met
+  // Check if restart targets met (MANUAL TRIGGER)
   useEffect(() => {
+      // Only trigger restart logic if we are waiting for restart
       if (isWaitingForRestart) {
-          // If targets are set to 0, auto restart immediately
-          if (restartCoinTarget === 0 && restartLikeTarget === 0) {
-              // Add small delay if coming from game over to let users see result briefly
-              const timer = setTimeout(() => initGame(), 4000);
-              return () => clearTimeout(timer);
-          }
+          // Note: Auto-restart for 0 targets is now handled in the Sequence Effect above to ensure animations play.
+          // This effect now only handles "Target Reached" interruption or completion.
 
-          if (currentRestartCoins >= restartCoinTarget || currentRestartLikes >= restartLikeTarget) {
+          if ((restartCoinTarget > 0 && currentRestartCoins >= restartCoinTarget) || 
+              (restartLikeTarget > 0 && currentRestartLikes >= restartLikeTarget)) {
               // Target met!
               addToast("Target Reached! Starting Game...", "success");
+              // Delay slightly if overlay just popped up
               setTimeout(() => initGame(), 500);
           }
       }
   }, [isWaitingForRestart, currentRestartCoins, currentRestartLikes, restartCoinTarget, restartLikeTarget, initGame]);
 
 
-  const processGuess = (guessWord: string, user?: any) => {
+  const processGuess = (guessWord: string, user?: TikTokUserData) => {
     if (gameStatus !== GameStatus.PLAYING || loading) return;
 
     if (user && maxGuessesPerUser > 0) {
@@ -252,15 +358,31 @@ const App: React.FC = () => {
             setGameStatus(GameStatus.WON);
             isGameOver = true;
             addToast(`Benar! Oleh ${user?.nickname || 'Kamu'}`, 'success');
-            const praises = PRAISE_WORDS[language];
-            setPraise(praises[Math.floor(Math.random() * praises.length)]);
-            if (user) setWinner(user);
+            
+            // DELAY OVERLAY FOR 1 SECOND
+            setTimeout(() => {
+                const praises = PRAISE_WORDS[language];
+                setPraise(praises[Math.floor(Math.random() * praises.length)]);
+                
+                // SCORE CALCULATION
+                const points = maxGuesses - prev.length;
+                if (user) {
+                  setWinner(user);
+                  updateLeaderboard(user, points > 0 ? points : 1);
+                }
+            }, 1000);
 
         } else if (updated.length >= maxGuesses) {
             setGameStatus(GameStatus.LOST);
             isGameOver = true;
-            const mocks = MOCK_MESSAGES[language];
-            setPraise(mocks[Math.floor(Math.random() * mocks.length)]);
+            
+            // DELAY OVERLAY FOR 1 SECOND
+            setTimeout(() => {
+                const mocks = MOCK_MESSAGES[language];
+                setPraise(mocks[Math.floor(Math.random() * mocks.length)]);
+                // Host gets a point
+                setHostScore(h => h + 1);
+            }, 1000);
         }
 
         return updated;
@@ -465,10 +587,6 @@ const App: React.FC = () => {
     const dx = e.clientX - dragStartPos.current.x;
     const dy = e.clientY - dragStartPos.current.y;
     
-    // Logic: moving 1px on screen should move the element 1px on screen, regardless of scale.
-    // If the transform order is translate then scale, we usually need to divide by scale.
-    // But if we are translating the same element that is scaled, it depends on transform origin.
-    // Standard approach for intuitive dragging of scaled elements:
     setGridPosition({
       x: gridStartPos.current.x + dx,
       y: gridStartPos.current.y + dy
@@ -482,21 +600,6 @@ const App: React.FC = () => {
 
 
   const letterOptions = Array.from({ length: 12 }, (_, i) => i + 4);
-  
-  const [showRestartOverlay, setShowRestartOverlay] = useState(false);
-
-  useEffect(() => {
-    let timer: any;
-    if (isWaitingForRestart && (restartCoinTarget > 0 || restartLikeTarget > 0)) {
-       timer = setTimeout(() => {
-           setShowRestartOverlay(true);
-       }, 4500);
-    } else {
-       setShowRestartOverlay(false);
-    }
-    return () => clearTimeout(timer);
-  }, [isWaitingForRestart, restartCoinTarget, restartLikeTarget]);
-
 
   // Helper for Header Badge Color
   const getBadgeStyle = () => {
@@ -613,12 +716,72 @@ const App: React.FC = () => {
         </div>
       )}
 
+      {/* LEADERBOARD OVERLAY */}
+      {showLeaderboard && (
+        <div className="absolute inset-0 z-[52] flex flex-col items-center justify-center pointer-events-none bg-black/60 backdrop-blur-md animate-fade-in p-4">
+           <div className="bg-zinc-900/90 w-full max-w-md rounded-3xl border border-yellow-500/20 shadow-2xl overflow-hidden flex flex-col max-h-[80vh] relative animate-slide-up">
+              
+              {/* Leaderboard Header */}
+              <div className="bg-gradient-to-r from-yellow-600/20 to-amber-600/20 p-5 border-b border-yellow-500/10 flex items-center justify-between">
+                 <div className="flex items-center gap-3">
+                    <Trophy className="text-yellow-400 fill-yellow-400 animate-bounce" size={28} />
+                    <div>
+                       <h2 className="text-xl font-black text-white uppercase tracking-wider">Top Players</h2>
+                       <p className="text-[10px] text-yellow-500/80 font-bold tracking-widest">SESSION RANKING</p>
+                    </div>
+                 </div>
+                 
+                 {/* Host Score */}
+                 <div className="flex flex-col items-end">
+                    <span className="text-[10px] text-zinc-400 font-bold uppercase">HOST SCORE</span>
+                    <span className="text-2xl font-black text-rose-500">{hostScore}</span>
+                 </div>
+              </div>
+
+              {/* List */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+                 {leaderboard.length === 0 ? (
+                    <div className="text-center py-10 text-zinc-500 italic">No winners yet! Be the first!</div>
+                 ) : (
+                    leaderboard.map((player, idx) => (
+                       <div key={player.userId} className={`flex items-center gap-3 p-3 rounded-xl border ${idx === 0 ? 'bg-gradient-to-r from-yellow-500/20 to-amber-500/10 border-yellow-500/50' : idx === 1 ? 'bg-zinc-800/60 border-zinc-400/30' : idx === 2 ? 'bg-orange-800/30 border-orange-700/30' : 'bg-zinc-800/30 border-transparent'} relative overflow-hidden`}>
+                          
+                          {/* Rank Badge */}
+                          <div className={`w-8 h-8 flex items-center justify-center rounded-lg font-black text-sm z-10 ${idx === 0 ? 'bg-yellow-400 text-black shadow-[0_0_10px_rgba(250,204,21,0.5)]' : idx === 1 ? 'bg-zinc-300 text-black' : idx === 2 ? 'bg-orange-600 text-white' : 'bg-zinc-700 text-zinc-400'}`}>
+                             {idx + 1}
+                          </div>
+
+                          <img src={player.profilePictureUrl} className="w-10 h-10 rounded-full border-2 border-zinc-700 object-cover z-10" alt="pfp" />
+                          
+                          <div className="flex-1 z-10 overflow-hidden">
+                             <div className="font-bold text-white truncate">{player.nickname}</div>
+                             <div className="text-[10px] text-zinc-400 flex items-center gap-1">
+                                <Crown size={10} className="text-yellow-500" /> {player.wins} Wins
+                             </div>
+                          </div>
+
+                          <div className="z-10 text-right">
+                             <div className="text-lg font-black text-white">{player.score}</div>
+                             <div className="text-[9px] text-zinc-500 font-bold uppercase">PTS</div>
+                          </div>
+
+                          {/* Shine Effect for #1 */}
+                          {idx === 0 && <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent translate-x-[-100%] animate-[shimmer_2s_infinite]"></div>}
+                       </div>
+                    ))
+                 )}
+              </div>
+           </div>
+        </div>
+      )}
+
       {/* PRAISE & WINNER OVERLAY */}
-      {praise && !showRestartOverlay && (
+      {praise && !showRestartOverlay && !showLeaderboard && (
          <div className="absolute inset-0 z-50 flex flex-col items-center justify-center pointer-events-none bg-black/60 backdrop-blur-[6px] animate-fade-in gap-6 p-4">
              {gameStatus === GameStatus.WON ? (
                 <>
-                  <h1 className="text-5xl sm:text-7xl font-black text-transparent bg-clip-text bg-gradient-to-b from-yellow-300 to-amber-600 drop-shadow-[0_4px_10px_rgba(0,0,0,0.8)] animate-pop tracking-tighter text-center">{praise}</h1>
+                  <div className="text-8xl mb-2 animate-bounce drop-shadow-xl">{praise.emoji}</div>
+                  <h1 className="text-5xl sm:text-7xl font-black text-transparent bg-clip-text bg-gradient-to-b from-yellow-300 to-amber-600 drop-shadow-[0_4px_10px_rgba(0,0,0,0.8)] animate-pop tracking-tighter text-center">{praise.text}</h1>
                   {winner && (
                    <div className="flex flex-col items-center animate-slide-up bg-zinc-900/60 p-6 rounded-3xl border border-yellow-500/30 backdrop-blur-md shadow-[0_0_50px_rgba(234,179,8,0.2)]">
                       <div className="relative mb-3">
@@ -632,8 +795,8 @@ const App: React.FC = () => {
                 </>
              ) : (
                 <>
-                  <div className="text-8xl mb-2 animate-bounce drop-shadow-xl filter grayscale-[0.2]">😜</div>
-                  <h1 className="text-4xl sm:text-6xl font-black text-transparent bg-clip-text bg-gradient-to-b from-rose-400 to-red-600 drop-shadow-[0_4px_10px_rgba(0,0,0,0.8)] animate-pop tracking-tighter text-center leading-tight">{praise}</h1>
+                  <div className="text-8xl mb-2 animate-bounce drop-shadow-xl">{praise.emoji}</div>
+                  <h1 className="text-4xl sm:text-6xl font-black text-transparent bg-clip-text bg-gradient-to-b from-rose-400 to-red-600 drop-shadow-[0_4px_10px_rgba(0,0,0,0.8)] animate-pop tracking-tighter text-center leading-tight">{praise.text}</h1>
                   <div className="flex flex-col items-center animate-slide-up bg-zinc-900/60 p-6 rounded-3xl border border-rose-500/30 backdrop-blur-md shadow-[0_0_50px_rgba(244,63,94,0.2)] mt-4">
                       <span className="text-zinc-400 font-bold uppercase tracking-widest text-sm mb-2">JAWABANNYA ADALAH</span>
                       <h2 className="text-5xl sm:text-6xl font-black text-white text-center tracking-widest drop-shadow-lg">{targetWord}</h2>

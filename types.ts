@@ -74,3 +74,12 @@ export interface TikTokLikeEvent {
   profilePictureUrl: string;
   label: string;
 }
+
+export interface PlayerScore {
+  userId: string;
+  uniqueId: string;
+  nickname: string;
+  profilePictureUrl: string;
+  score: number;
+  wins: number;
+}
