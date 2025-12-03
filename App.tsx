@@ -1,10 +1,10 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Settings, RefreshCw, Trophy, Globe, X, Radio, Link as LinkIcon, User, Layers, Users, LayoutGrid, AlertCircle, CheckCircle, KeyRound, Gift, Heart, Lock, Wifi, WifiOff, PlugZap, Move, ZoomIn, ZoomOut, Crown, Medal } from 'lucide-react';
+import { Settings, RefreshCw, Trophy, Globe, X, Radio, Link as LinkIcon, User, Layers, Users, LayoutGrid, AlertCircle, CheckCircle, KeyRound, Gift, Heart, Lock, Wifi, WifiOff, PlugZap, Move, ZoomIn, ZoomOut, Crown, Medal, Flame, Star } from 'lucide-react';
 import { fetchDictionary, getRandomWord, isValidWord } from './services/wordService';
 import { tiktokService } from './services/tiktokConnector';
 import Grid from './components/Grid';
-import { DictionaryData, GameStatus, GuessData, Language, TikTokChatEvent, TikTokMemberEvent, TikTokGiftEvent, TikTokLikeEvent, ToastMessage, TikTokUserData, PlayerScore } from './types';
+import { DictionaryData, GameStatus, GuessData, Language, TikTokChatEvent, TikTokMemberEvent, TikTokGiftEvent, TikTokLikeEvent, ToastMessage, TikTokUserData, PlayerScore, SupporterStats } from './types';
 
 interface MessageData {
   text: string;
@@ -92,12 +92,18 @@ const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [showConnect, setShowConnect] = useState(false);
   
-  // Layout / Drag State
+  // Layout / Drag State for GRID
   const [isDragMode, setIsDragMode] = useState(false);
   const [gridPosition, setGridPosition] = useState({ x: 0, y: 0 });
   const [scale, setScale] = useState(1);
   const dragStartPos = useRef({ x: 0, y: 0 });
   const gridStartPos = useRef({ x: 0, y: 0 });
+
+  // Layout / Drag State for STATS WIDGET
+  const [statsPosition, setStatsPosition] = useState({ x: 20, y: 100 });
+  const [statsScale, setStatsScale] = useState(0.85);
+  const statsStartPos = useRef({ x: 0, y: 0 });
+  const isStatsDragging = useRef(false);
   
   // TikTok State
   const [tiktokUsername, setTiktokUsername] = useState('');
@@ -130,6 +136,12 @@ const App: React.FC = () => {
   const [hostScore, setHostScore] = useState(0);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
 
+  // GLOBAL SUPPORTER STATS (Top Likers & Gifters)
+  const allSupportersRef = useRef<Record<string, SupporterStats>>({});
+  const [topLikers, setTopLikers] = useState<SupporterStats[]>([]);
+  const [topGifters, setTopGifters] = useState<SupporterStats[]>([]);
+  const [activeStatsTab, setActiveStatsTab] = useState<'likes'|'gifts'>('gifts');
+
   // Restart Logic State
   const [isWaitingForRestart, setIsWaitingForRestart] = useState(false);
   const [showRestartOverlay, setShowRestartOverlay] = useState(false);
@@ -143,6 +155,16 @@ const App: React.FC = () => {
 
   const isProcessingRef = useRef(false);
   const ANIMATION_DELAY = 1500;
+
+  // Auto-switch stats tab
+  useEffect(() => {
+    const interval = setInterval(() => {
+        if (!isDragMode) {
+            setActiveStatsTab(prev => prev === 'gifts' ? 'likes' : 'gifts');
+        }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [isDragMode]);
 
   const addToast = (msg: string, type: 'default' | 'error' | 'success' = 'default') => {
     const id = Date.now();
@@ -189,6 +211,47 @@ const App: React.FC = () => {
       // Sort by score desc, take top 10
       return newBoard.sort((a, b) => b.score - a.score).slice(0, 10);
     });
+  };
+
+  // Helper to update global stats
+  const updateSupporterStats = (user: {userId: string, uniqueId: string, nickname: string, profilePictureUrl: string}, type: 'like' | 'gift', amount: number) => {
+      const currentStats = allSupportersRef.current[user.userId] || {
+          userId: user.userId,
+          uniqueId: user.uniqueId,
+          nickname: user.nickname,
+          profilePictureUrl: user.profilePictureUrl,
+          totalLikes: 0,
+          totalCoins: 0
+      };
+
+      // Update values
+      if (type === 'like') currentStats.totalLikes += amount;
+      if (type === 'gift') currentStats.totalCoins += amount;
+      
+      // Update nickname/pfp in case it changed
+      currentStats.nickname = user.nickname;
+      currentStats.profilePictureUrl = user.profilePictureUrl;
+
+      allSupportersRef.current[user.userId] = currentStats;
+
+      // Recalculate Tops (throttled slightly in a real app, but direct here for simplicity)
+      const allUsers = Object.values(allSupportersRef.current) as SupporterStats[];
+      
+      if (type === 'gift') {
+          const sortedGifters = [...allUsers]
+             .filter(u => u.totalCoins > 0)
+             .sort((a, b) => b.totalCoins - a.totalCoins)
+             .slice(0, 5);
+          setTopGifters(sortedGifters);
+      }
+      
+      if (type === 'like') {
+          const sortedLikers = [...allUsers]
+             .filter(u => u.totalLikes > 0)
+             .sort((a, b) => b.totalLikes - a.totalLikes)
+             .slice(0, 5);
+          setTopLikers(sortedLikers);
+      }
   };
 
   // --- GAME INITIALIZATION ---
@@ -437,7 +500,22 @@ const App: React.FC = () => {
   };
 
   const handleTikTokGift = (msg: TikTokGiftEvent) => {
-      // Only count if waiting for restart
+      // FIX: TikTok emits streakable gifts (type 1) twice (progress + end).
+      // We ignore the 'repeatEnd' event to prevent double counting.
+      if (msg.giftType === 1 && msg.repeatEnd) {
+          return;
+      }
+
+      // Global Tracking
+      if(msg.diamondCount > 0) {
+          updateSupporterStats(
+              { userId: msg.userId, uniqueId: msg.uniqueId, nickname: msg.nickname, profilePictureUrl: msg.profilePictureUrl },
+              'gift',
+              msg.diamondCount
+          );
+      }
+
+      // Restart Logic
       if (isWaitingForRestart) {
           if(msg.diamondCount > 0) {
              setCurrentRestartCoins(prev => prev + msg.diamondCount);
@@ -446,9 +524,20 @@ const App: React.FC = () => {
   };
 
   const handleTikTokLike = (msg: TikTokLikeEvent) => {
+      const thisBatch = Number(msg.likeCount);
+      
+      // Global Tracking (Accumulate batch counts for user leaderboard)
+      if (thisBatch > 0) {
+          updateSupporterStats(
+              { userId: msg.userId, uniqueId: msg.uniqueId, nickname: msg.nickname, profilePictureUrl: msg.profilePictureUrl },
+              'like',
+              thisBatch
+          );
+      }
+
+      // Restart Logic (Diff strategy for accuracy against total)
       if (isWaitingForRestart) {
           const currentTotal = Number(msg.totalLikeCount);
-          const thisBatch = Number(msg.likeCount);
 
           if (baselineLikeCountRef.current === null) {
               baselineLikeCountRef.current = currentTotal - thisBatch;
@@ -571,7 +660,7 @@ const App: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [initGame]);
 
-  // --- DRAG / LAYOUT LOGIC ---
+  // --- DRAG / LAYOUT LOGIC MAIN GRID ---
   
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!isDragMode) return;
@@ -596,6 +685,37 @@ const App: React.FC = () => {
   const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!isDragMode) return;
     e.currentTarget.releasePointerCapture(e.pointerId);
+  };
+
+  // --- DRAG / LAYOUT LOGIC STATS WIDGET ---
+  const handleStatsPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!isDragMode) return;
+      e.stopPropagation();
+      const target = e.currentTarget;
+      target.setPointerCapture(e.pointerId);
+      dragStartPos.current = { x: e.clientX, y: e.clientY };
+      statsStartPos.current = { x: statsPosition.x, y: statsPosition.y };
+      isStatsDragging.current = true;
+  };
+
+  const handleStatsPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!isDragMode || !isStatsDragging.current) return;
+      e.stopPropagation();
+      
+      const dx = e.clientX - dragStartPos.current.x;
+      const dy = e.clientY - dragStartPos.current.y;
+      
+      setStatsPosition({
+          x: statsStartPos.current.x + dx,
+          y: statsStartPos.current.y + dy
+      });
+  };
+
+  const handleStatsPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!isDragMode) return;
+      e.stopPropagation();
+      isStatsDragging.current = false;
+      e.currentTarget.releasePointerCapture(e.pointerId);
   };
 
 
@@ -637,6 +757,95 @@ const App: React.FC = () => {
              </div>
           </div>
         ))}
+      </div>
+
+      {/* FLOATING STATS WIDGET (LIKERS & GIFTERS) */}
+      <div 
+        className={`absolute z-30 transition-transform duration-75 ${isDragMode ? 'cursor-move touch-none border-2 border-dashed border-indigo-500/50 rounded-2xl' : ''}`}
+        onPointerDown={handleStatsPointerDown}
+        onPointerMove={handleStatsPointerMove}
+        onPointerUp={handleStatsPointerUp}
+        onPointerCancel={handleStatsPointerUp}
+        style={{
+            transform: `translate(${statsPosition.x}px, ${statsPosition.y}px) scale(${statsScale})`,
+            width: '280px',
+            transformOrigin: 'top left'
+        }}
+      >
+          {isDragMode && (
+              <div 
+                  onPointerDown={(e) => e.stopPropagation()} 
+                  className="absolute -top-10 left-0 bg-zinc-900/90 text-white text-[10px] p-1 rounded-lg flex gap-2 pointer-events-auto z-50 shadow-lg"
+              >
+                  <button onClick={() => setStatsScale(s => Math.max(0.5, s - 0.1))} className="p-1 hover:bg-zinc-700 rounded"><ZoomOut size={14}/></button>
+                  <span className="p-1 min-w-[30px] text-center">{Math.round(statsScale * 100)}%</span>
+                  <button onClick={() => setStatsScale(s => Math.min(1.5, s + 0.1))} className="p-1 hover:bg-zinc-700 rounded"><ZoomIn size={14}/></button>
+              </div>
+          )}
+
+          <div className="bg-black/30 backdrop-blur-sm border border-white/10 rounded-2xl overflow-hidden shadow-2xl flex flex-col w-full">
+             {/* Header / Tabs */}
+             <div className="flex border-b border-white/5">
+                 <button onClick={() => setActiveStatsTab('gifts')} className={`flex-1 py-2 flex items-center justify-center gap-1.5 transition-colors ${activeStatsTab === 'gifts' ? 'bg-amber-500/20 text-amber-400' : 'bg-transparent text-zinc-500 hover:text-zinc-300'}`}>
+                     <Gift size={16} className={activeStatsTab === 'gifts' ? 'animate-bounce' : ''} />
+                     <span className="text-xs font-black uppercase tracking-wider">Top Gifts</span>
+                 </button>
+                 <div className="w-[1px] bg-white/5"></div>
+                 <button onClick={() => setActiveStatsTab('likes')} className={`flex-1 py-2 flex items-center justify-center gap-1.5 transition-colors ${activeStatsTab === 'likes' ? 'bg-rose-500/20 text-rose-400' : 'bg-transparent text-zinc-500 hover:text-zinc-300'}`}>
+                     <Heart size={16} className={activeStatsTab === 'likes' ? 'animate-pulse' : ''} />
+                     <span className="text-xs font-black uppercase tracking-wider">Top Likes</span>
+                 </button>
+             </div>
+             
+             {/* Content List */}
+             <div className="p-3 min-h-[180px]">
+                 {activeStatsTab === 'gifts' ? (
+                     <div className="space-y-2 animate-fade-in">
+                        {topGifters.length === 0 ? (
+                            <div className="text-center py-8 text-zinc-500 text-xs italic">No gifts yet.<br/>Be the first! 🎁</div>
+                        ) : (
+                            topGifters.map((user, idx) => (
+                                <div key={user.userId} className="flex items-center gap-2 relative">
+                                    <div className={`w-5 h-5 flex items-center justify-center rounded text-[10px] font-bold ${idx===0 ? 'bg-yellow-400 text-black' : idx===1 ? 'bg-zinc-400 text-black' : idx===2 ? 'bg-orange-600 text-white' : 'bg-zinc-800 text-zinc-400'}`}>
+                                        {idx + 1}
+                                    </div>
+                                    <img src={user.profilePictureUrl} className="w-8 h-8 rounded-full border border-zinc-700" alt="" />
+                                    <div className="flex-1 min-w-0">
+                                        <div className="text-xs font-bold text-white truncate">{user.nickname}</div>
+                                        <div className="text-[10px] text-amber-400 font-medium flex items-center gap-1">
+                                            <Gift size={10} /> {user.totalCoins} Coins
+                                        </div>
+                                    </div>
+                                    {idx === 0 && <Crown size={14} className="text-yellow-400 absolute right-0 top-0 rotate-12" />}
+                                </div>
+                            ))
+                        )}
+                     </div>
+                 ) : (
+                     <div className="space-y-2 animate-fade-in">
+                        {topLikers.length === 0 ? (
+                            <div className="text-center py-8 text-zinc-500 text-xs italic">No likes yet.<br/>Tap tap tap! ❤️</div>
+                        ) : (
+                            topLikers.map((user, idx) => (
+                                <div key={user.userId} className="flex items-center gap-2 relative">
+                                    <div className={`w-5 h-5 flex items-center justify-center rounded text-[10px] font-bold ${idx===0 ? 'bg-rose-500 text-white' : 'bg-zinc-800 text-zinc-400'}`}>
+                                        {idx + 1}
+                                    </div>
+                                    <img src={user.profilePictureUrl} className="w-8 h-8 rounded-full border border-zinc-700" alt="" />
+                                    <div className="flex-1 min-w-0">
+                                        <div className="text-xs font-bold text-white truncate">{user.nickname}</div>
+                                        <div className="text-[10px] text-rose-400 font-medium flex items-center gap-1">
+                                            <Heart size={10} /> {user.totalLikes}
+                                        </div>
+                                    </div>
+                                    {idx === 0 && <Flame size={14} className="text-rose-500 absolute right-0 top-0" />}
+                                </div>
+                            ))
+                        )}
+                     </div>
+                 )}
+             </div>
+          </div>
       </div>
 
       {/* TOAST NOTIFICATIONS */}
@@ -962,7 +1171,7 @@ const App: React.FC = () => {
               
               {/* LAYOUT RESET */}
               <div className="pt-4 border-t border-zinc-800">
-                 <button onClick={() => { setGridPosition({x:0, y:0}); setScale(1); }} className="text-xs font-bold text-zinc-500 hover:text-white underline w-full text-center">
+                 <button onClick={() => { setGridPosition({x:0, y:0}); setScale(1); setStatsPosition({x:20, y:100}); setStatsScale(0.85); }} className="text-xs font-bold text-zinc-500 hover:text-white underline w-full text-center">
                     Reset Layout Position
                  </button>
               </div>

@@ -63,6 +63,7 @@ export interface TikTokGiftEvent {
   profilePictureUrl: string;
   giftName: string;
   giftType: number;
+  repeatEnd?: boolean;
 }
 
 export interface TikTokLikeEvent {
@@ -82,4 +83,13 @@ export interface PlayerScore {
   profilePictureUrl: string;
   score: number;
   wins: number;
+}
+
+export interface SupporterStats {
+  userId: string;
+  uniqueId: string;
+  nickname: string;
+  profilePictureUrl: string;
+  totalLikes: number;
+  totalCoins: number;
 }
