@@ -24,7 +24,7 @@ export const fetchDictionary = async (language: Language): Promise<DictionaryDat
 
     if (language === 'EN') {
       // For English, we fetch three sources:
-      // 1. The Main JSON for 4, 6-15 letter words
+      // 1. The Main JSON for 4, 6-15 letter words (and fallback 5-letter words)
       // 2. The Target List (La.txt) for 5 letter common words
       // 3. The Allowed List (Ta.txt) for 5 letter extra validation words
       
@@ -36,7 +36,10 @@ export const fetchDictionary = async (language: Language): Promise<DictionaryDat
 
       if (!mainRes.ok || !targetRes.ok || !allowedRes.ok) throw new Error('Failed to fetch English dictionaries');
 
-      // Process Main JSON (Legacy format for other lengths)
+      // Temp storage for 5-letter words found in the Main JSON
+      let mainJson5LetterWords: string[] = [];
+
+      // Process Main JSON
       const mainText = await mainRes.text();
       const mainJsonString = `[${mainText.trim().replace(/,$/, '')}]`;
       const mainRawData: string[][] = JSON.parse(mainJsonString);
@@ -48,9 +51,13 @@ export const fetchDictionary = async (language: Language): Promise<DictionaryDat
 
         if (validWords.length > 0) {
             const len = validWords[0].length;
-            // Only populate if it's NOT 5 letters, because we handle 5 letters specifically below
-            if (len !== 5) {
-               dictionary[len] = validWords;
+            
+            if (len === 5) {
+                // Collect these to merge later
+                mainJson5LetterWords = validWords;
+            } else {
+                // For non-5 lengths, just set them directly
+                dictionary[len] = validWords;
             }
         }
       });
@@ -67,9 +74,9 @@ export const fetchDictionary = async (language: Language): Promise<DictionaryDat
       const targetWords = parseWords(targetText); // The Common words (for Game Target)
       const allowedWords = parseWords(allowedText); // The Wider words (for Validation only)
 
-      // Combine both lists for validation (dictionary[5])
-      // This ensures user can guess uncommon words that are valid, even if they aren't the answer
-      const combined5LetterWords = Array.from(new Set([...targetWords, ...allowedWords]));
+      // Combine ALL lists for validation (dictionary[5])
+      // This includes Target + Allowed + Main JSON (to catch words like DADDY that might be missing from txt files)
+      const combined5LetterWords = Array.from(new Set([...targetWords, ...allowedWords, ...mainJson5LetterWords]));
       
       if (combined5LetterWords.length > 0) {
         dictionary[5] = combined5LetterWords;
@@ -128,7 +135,7 @@ export const getRandomWord = (dictionary: DictionaryData, length: number): strin
 
 export const isValidWord = (word: string, dictionary: DictionaryData): boolean => {
   const length = word.length;
-  // This checks against dictionary[5] which is the COMBINED list (Common + Wider)
+  // This checks against dictionary[5] which is the COMBINED list (Common + Wider + Main JSON)
   const words = dictionary[length];
   if (!words) return false;
   
