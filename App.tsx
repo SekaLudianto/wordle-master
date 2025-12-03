@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Settings, RefreshCw, Trophy, Globe, X, Radio, Link as LinkIcon, User, Layers, Users, LayoutGrid, AlertCircle, CheckCircle, KeyRound, Gift, Heart, Lock, Wifi, WifiOff, PlugZap, Move, ZoomIn, ZoomOut, Crown, Medal, Flame, Star, Trash2, Video, Rocket } from 'lucide-react';
+import { Settings, RefreshCw, Trophy, Globe, X, Radio, Link as LinkIcon, User, Layers, Users, LayoutGrid, AlertCircle, CheckCircle, KeyRound, Gift, Heart, Lock, Wifi, WifiOff, PlugZap, Move, ZoomIn, ZoomOut, Crown, Medal, Flame, Star, Trash2, Video } from 'lucide-react';
 import { fetchDictionary, getRandomWord, isValidWord } from './services/wordService';
 import { tiktokService } from './services/tiktokConnector';
 import Grid from './components/Grid';
@@ -155,7 +155,6 @@ const App: React.FC = () => {
       return saved ? JSON.parse(saved) : [];
     } catch { return []; }
   });
-  const leaderboardListRef = useRef<HTMLDivElement>(null);
   
   const [hostScore, setHostScore] = useState(() => {
     try {
@@ -182,7 +181,6 @@ const App: React.FC = () => {
   // Restart Logic State
   const [isWaitingForRestart, setIsWaitingForRestart] = useState(false);
   const [showRestartOverlay, setShowRestartOverlay] = useState(false);
-  const [showNewRoundOverlay, setShowNewRoundOverlay] = useState(false); // NEW STATE for 3s delay
   const [currentRestartCoins, setCurrentRestartCoins] = useState(0);
   const [currentRestartLikes, setCurrentRestartLikes] = useState(0);
   const baselineLikeCountRef = useRef<number | null>(null); 
@@ -317,15 +315,15 @@ const App: React.FC = () => {
 
   const initGame = useCallback(async () => {
     setLoading(true);
-    // Explicitly lock game during transition
-    isGameActiveRef.current = false;
-    
-    // Clear Queue completely
+    // Clear Queue completely to ensure a clean start immediately
     guessQueueRef.current = [];
     setQueueLength(0);
     
     // Reset Guesses Ref
     guessesRef.current = [];
+    
+    // Set Ref to Active
+    isGameActiveRef.current = true;
 
     setGameStatus(GameStatus.PLAYING);
     setGuesses([]);
@@ -336,9 +334,6 @@ const App: React.FC = () => {
     setWinner(null);
     setShowLeaderboard(false);
     setShowRestartOverlay(false);
-    
-    // Show the "New Round" Overlay
-    setShowNewRoundOverlay(true);
     
     // Reset restart counters
     setIsWaitingForRestart(false);
@@ -361,18 +356,12 @@ const App: React.FC = () => {
       }
     } catch (e) {
       addToast('Error loading dictionary', 'error');
+    } finally {
+      // Ensure queue is empty again before enabling inputs, just in case
+      guessQueueRef.current = []; 
+      setQueueLength(0);
+      setLoading(false);
     }
-    
-    // Force a 3-second delay for the "New Round" animation
-    setTimeout(() => {
-        setShowNewRoundOverlay(false);
-        setLoading(false);
-        isGameActiveRef.current = true; // Unlock inputs now
-        // Ensure queue is empty again before enabling inputs
-        guessQueueRef.current = []; 
-        setQueueLength(0);
-    }, 3000);
-
   }, [language, wordLength]);
 
   useEffect(() => {
@@ -399,28 +388,6 @@ const App: React.FC = () => {
     }
   }, [gameStatus, loading, targetWord, processQueue]);
 
-  // LEADERBOARD AUTO SCROLL EFFECT
-  useEffect(() => {
-    if (showLeaderboard && leaderboardListRef.current) {
-        // Reset scroll position immediately
-        leaderboardListRef.current.scrollTop = 0;
-
-        // If we have more than 5 users, we initiate auto-scroll
-        if (leaderboard.length > 5) {
-            const scrollTimer = setTimeout(() => {
-                if (leaderboardListRef.current) {
-                    leaderboardListRef.current.scrollTo({
-                        top: leaderboardListRef.current.scrollHeight, // Scroll to bottom
-                        behavior: 'smooth'
-                    });
-                }
-            }, 3500); // Wait 3.5s before scrolling
-
-            return () => clearTimeout(scrollTimer);
-        }
-    }
-  }, [showLeaderboard, leaderboard.length]);
-
   // END GAME SEQUENCE MANAGER
   useEffect(() => {
     if (gameStatus === GameStatus.WON || gameStatus === GameStatus.LOST) {
@@ -436,9 +403,7 @@ const App: React.FC = () => {
         setShowLeaderboard(true);
       }, 5000); 
 
-      // 3. Leaderboard Duration Extended: 
-      //    Wait 3.5s (View Top 5) + 2s (Scroll) + 3.5s (View Bottom 5) = ~9s Total
-      //    Total Time = 5s + 9s = 14s
+      // 3. Wait another 6 seconds (Total 11s), hide Leaderboard
       const restartTimer = setTimeout(() => {
          setShowLeaderboard(false);
          
@@ -449,7 +414,7 @@ const App: React.FC = () => {
          } else {
              setShowRestartOverlay(true);
          }
-      }, 14000); // 14s Total Sequence
+      }, 11000); 
 
       return () => {
         clearTimeout(leaderboardTimer);
@@ -973,22 +938,6 @@ const App: React.FC = () => {
           </div>
         ))}
       </div>
-      
-      {/* NEW ROUND STARTING OVERLAY */}
-      {showNewRoundOverlay && (
-         <div className="absolute inset-0 z-[60] flex flex-col items-center justify-center bg-black/80 backdrop-blur-md animate-fade-in pointer-events-none">
-            <Rocket size={80} className="text-indigo-400 mb-6 animate-bounce drop-shadow-[0_0_25px_rgba(99,102,241,0.6)]" />
-            <h1 className="text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400 drop-shadow-xl animate-pulse text-center leading-tight">
-               NEW ROUND<br/>STARTING...
-            </h1>
-            <div className="mt-8 flex gap-2">
-               <div className="w-4 h-4 bg-indigo-500 rounded-full animate-ping"></div>
-               <div className="w-4 h-4 bg-purple-500 rounded-full animate-ping delay-100"></div>
-               <div className="w-4 h-4 bg-pink-500 rounded-full animate-ping delay-200"></div>
-            </div>
-            <p className="text-zinc-400 mt-4 font-bold tracking-widest text-sm uppercase">Get Ready to Guess!</p>
-         </div>
-      )}
 
       {/* RECONNECTING OVERLAY (FUNNY) */}
       {isReconnecting && (
@@ -1007,7 +956,7 @@ const App: React.FC = () => {
       )}
 
       {/* RESTART REQUIRED OVERLAY */}
-      {showRestartOverlay && !showNewRoundOverlay && (
+      {showRestartOverlay && (
         <div className="absolute inset-0 z-[55] flex flex-col items-center justify-center bg-zinc-950/90 backdrop-blur-sm animate-fade-in p-6">
            <div className="bg-zinc-900 w-full max-w-md p-6 rounded-3xl border border-zinc-700 shadow-[0_0_50px_rgba(0,0,0,0.8)] flex flex-col items-center gap-6">
               
@@ -1059,7 +1008,7 @@ const App: React.FC = () => {
       {/* LEADERBOARD OVERLAY */}
       {showLeaderboard && (
         <div className="absolute inset-0 z-[52] flex flex-col items-center justify-center pointer-events-none bg-zinc-950/80 backdrop-blur-md animate-fade-in p-4">
-           <div className="bg-zinc-900 w-full max-w-md rounded-3xl border border-yellow-500/20 shadow-2xl overflow-hidden flex flex-col relative animate-slide-up">
+           <div className="bg-zinc-900 w-full max-w-md rounded-3xl border border-yellow-500/20 shadow-2xl overflow-hidden flex flex-col max-h-[80vh] relative animate-slide-up">
               
               {/* Leaderboard Header */}
               <div className="bg-gradient-to-r from-yellow-600/30 to-amber-600/30 p-5 border-b border-yellow-500/10 flex items-center justify-between">
@@ -1079,15 +1028,12 @@ const App: React.FC = () => {
               </div>
 
               {/* List */}
-              <div 
-                ref={leaderboardListRef}
-                className="flex-1 space-y-3 custom-scrollbar overflow-hidden p-4 max-h-[380px]"
-              >
+              <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
                  {leaderboard.length === 0 ? (
                     <div className="text-center py-10 text-zinc-500 italic">No winners yet! Be the first!</div>
                  ) : (
                     leaderboard.map((player, idx) => (
-                       <div key={player.userId} className={`flex items-center gap-3 p-3 rounded-xl border ${idx === 0 ? 'bg-gradient-to-r from-yellow-500/30 to-amber-500/20 border-yellow-500/60' : idx === 1 ? 'bg-zinc-800 border-zinc-400/50' : idx === 2 ? 'bg-orange-900/40 border-orange-700/50' : 'bg-zinc-800/40 border-white/5'} relative overflow-hidden shadow-lg flex-shrink-0`}>
+                       <div key={player.userId} className={`flex items-center gap-3 p-3 rounded-xl border ${idx === 0 ? 'bg-gradient-to-r from-yellow-500/30 to-amber-500/20 border-yellow-500/60' : idx === 1 ? 'bg-zinc-800 border-zinc-400/50' : idx === 2 ? 'bg-orange-900/40 border-orange-700/50' : 'bg-zinc-800/40 border-white/5'} relative overflow-hidden shadow-lg`}>
                           
                           {/* Rank Badge */}
                           <div className={`w-8 h-8 flex items-center justify-center rounded-lg font-black text-sm z-10 ${idx === 0 ? 'bg-yellow-400 text-black shadow-[0_0_10px_rgba(250,204,21,0.5)]' : idx === 1 ? 'bg-zinc-300 text-black' : idx === 2 ? 'bg-orange-600 text-white' : 'bg-zinc-700 text-zinc-400'}`}>
@@ -1119,7 +1065,7 @@ const App: React.FC = () => {
       )}
 
       {/* PRAISE & WINNER OVERLAY */}
-      {praise && !showRestartOverlay && !showLeaderboard && !showNewRoundOverlay && (
+      {praise && !showRestartOverlay && !showLeaderboard && (
          <div className="absolute inset-0 z-50 flex flex-col items-center justify-center pb-52 pointer-events-none bg-black/70 backdrop-blur-[6px] animate-fade-in gap-4 p-4">
              {gameStatus === GameStatus.WON ? (
                 <>
@@ -1194,7 +1140,7 @@ const App: React.FC = () => {
 
       {/* MAIN GRID */}
       <main className="flex-1 flex flex-col relative overflow-hidden">
-        {loading && !showNewRoundOverlay ? (
+        {loading ? (
            <div className="flex-1 flex items-center justify-center">
              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500"></div>
            </div>
