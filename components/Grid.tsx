@@ -28,19 +28,22 @@ const Cell: React.FC<CellProps> = ({ char, status, animate, wordLength }) => {
   else if (wordLength > 6) textSize = "text-lg sm:text-xl font-black";
   else textSize = "text-2xl sm:text-3xl font-black";
 
-  // Added 'aspect-square' to force 1:1 ratio
-  // Added 'w-full' to ensure it fills the grid column
-  let baseClass = `flex items-center justify-center border-2 rounded-md sm:rounded-xl uppercase select-none transition-all duration-500 ${textSize} relative overflow-hidden aspect-square w-full`;
-  let colorClass = "border-zinc-800 bg-zinc-900/40"; 
+  // High contrast base styles for Overlay visibility
+  // Added 'drop-shadow-md' to text for readability against any background
+  let baseClass = `flex items-center justify-center border-2 rounded-md sm:rounded-xl uppercase select-none transition-all duration-500 ${textSize} relative overflow-hidden aspect-square w-full drop-shadow-sm`;
+  
+  // Default dark background needs to be opaque enough (80-90%) to block the video feed behind it slightly
+  let colorClass = "border-zinc-700 bg-zinc-900/80 text-white"; 
   
   if (status === 'correct') {
-    colorClass = "border-emerald-500 bg-emerald-500 text-white shadow-[0_0_20px_rgba(16,185,129,0.3)]";
+    colorClass = "border-emerald-500 bg-emerald-600 text-white shadow-[0_0_20px_rgba(16,185,129,0.5)]";
   } else if (status === 'present') {
-    colorClass = "border-amber-500 bg-amber-500 text-white shadow-[0_0_20px_rgba(245,158,11,0.3)]";
+    colorClass = "border-amber-500 bg-amber-500 text-white shadow-[0_0_20px_rgba(245,158,11,0.5)]";
   } else if (status === 'absent') {
-    colorClass = "border-zinc-700 bg-zinc-800 text-zinc-500";
+    colorClass = "border-zinc-600 bg-zinc-800/90 text-zinc-400";
   } else if (char) {
-    colorClass = "border-indigo-400/50 text-indigo-100 bg-indigo-500/10 shadow-[0_0_15px_rgba(99,102,241,0.15)] animate-pop backdrop-blur-sm";
+    // Current active typing cell - High Visibility
+    colorClass = "border-indigo-400 text-white bg-indigo-900/60 shadow-[0_0_15px_rgba(99,102,241,0.3)] animate-pop backdrop-blur-sm";
   }
 
   if (animate && char) {
@@ -52,7 +55,7 @@ const Cell: React.FC<CellProps> = ({ char, status, animate, wordLength }) => {
       {status !== 'empty' && status !== 'absent' && (
         <div className="absolute top-0 left-0 right-0 h-1/3 bg-gradient-to-b from-white/20 to-transparent pointer-events-none" />
       )}
-      <span className="z-10 relative drop-shadow-sm">{char}</span>
+      <span className="z-10 relative">{char}</span>
     </div>
   );
 };
@@ -97,10 +100,10 @@ const AvatarDisplay: React.FC<{ user?: TikTokUserData }> = ({ user }) => {
         <img 
           src={user.profilePictureUrl} 
           alt={user.uniqueId} 
-          className="w-8 h-8 sm:w-12 sm:h-12 rounded-full border-2 border-zinc-700 shadow-lg object-cover ring-2 ring-transparent transition-all"
+          className="w-8 h-8 sm:w-12 sm:h-12 rounded-full border-2 border-white/20 shadow-lg object-cover ring-2 ring-black/50 transition-all"
         />
       ) : (
-        <div className="w-8 h-8 sm:w-12 sm:h-12 rounded-full bg-zinc-700 flex items-center justify-center border-2 border-zinc-600">
+        <div className="w-8 h-8 sm:w-12 sm:h-12 rounded-full bg-zinc-800 flex items-center justify-center border-2 border-zinc-600">
           <User size={16} className="text-zinc-400" />
         </div>
       )}
@@ -111,17 +114,16 @@ const AvatarDisplay: React.FC<{ user?: TikTokUserData }> = ({ user }) => {
 // RIGHT SIDE: Nickname Info
 const InfoDisplay: React.FC<{ user?: TikTokUserData }> = ({ user }) => {
   if (!user) {
-     // Increased width placeholders to match the new wider column
      return <div className="w-24 sm:w-40 flex-shrink-0"></div>; 
   }
 
   return (
-    // DRAMATICALLY INCREASED WIDTH here (w-24 sm:w-40) to prevent truncation
+    // Added Strong Drop Shadow [0_1.2px_1.2px_rgba(0,0,0,0.8)] so white text is readable on white video backgrounds
     <div className="w-24 sm:w-40 flex-shrink-0 flex flex-col justify-center animate-fade-in pl-1 sm:pl-2 overflow-hidden">
-        <span className="text-[10px] sm:text-xs text-white font-bold truncate w-full leading-tight drop-shadow-md text-left">
+        <span className="text-[10px] sm:text-xs text-white font-black truncate w-full leading-tight drop-shadow-[0_1.5px_1.5px_rgba(0,0,0,1)] text-left">
           {user.nickname}
         </span>
-        <span className="text-[9px] sm:text-[11px] text-zinc-400 truncate w-full leading-tight font-medium mt-0.5 text-left">
+        <span className="text-[9px] sm:text-[11px] text-zinc-300 truncate w-full leading-tight font-bold mt-0.5 text-left drop-shadow-[0_1px_1px_rgba(0,0,0,1)]">
           @{user.uniqueId}
         </span>
     </div>
@@ -150,7 +152,7 @@ const Grid: React.FC<GridProps> = ({ guesses, currentGuess, targetWord, wordLeng
               <AvatarDisplay user={guessData.user} />
 
               {/* Center: Grid Cells */}
-              <div style={gridStyle} className="flex-1 max-h-16 aspect-auto min-h-0 shadow-xl bg-black/20 p-1.5 sm:p-2 rounded-xl backdrop-blur-sm border border-white/5 flex items-center">
+              <div style={gridStyle} className="flex-1 max-h-16 aspect-auto min-h-0 shadow-2xl bg-black/30 p-1.5 sm:p-2 rounded-xl backdrop-blur-sm border border-white/5 flex items-center">
                 {guessData.word.split('').map((char, j) => (
                   <Cell 
                     key={j} 
@@ -175,7 +177,7 @@ const Grid: React.FC<GridProps> = ({ guesses, currentGuess, targetWord, wordLeng
              
              <div style={gridStyle} className="flex-1 max-h-16 min-h-0 p-1.5 sm:p-2 flex items-center">
               {Array.from({ length: wordLength }).map((_, i) => (
-                <Cell key={i} char={currentGuess[i] || ''} status="empty" wordLength={wordLength} />
+                <Cell key={i} char={currentGuess[i] || ''} status={currentGuess[i] ? 'empty' : 'empty'} wordLength={wordLength} />
               ))}
             </div>
              
@@ -185,12 +187,12 @@ const Grid: React.FC<GridProps> = ({ guesses, currentGuess, targetWord, wordLeng
 
         {/* Render Empty Rows */}
         {Array.from({ length: empties }).map((_, i) => (
-          <div key={`empty-${i}`} className="flex items-center gap-1 sm:gap-2 w-full opacity-30">
+          <div key={`empty-${i}`} className="flex items-center gap-1 sm:gap-2 w-full opacity-40">
              <div className="w-10 sm:w-14 flex-shrink-0"></div> {/* Left Placeholder */}
              
              <div style={gridStyle} className="flex-1 max-h-16 min-h-0 p-1.5 sm:p-2 flex items-center">
                {Array.from({ length: wordLength }).map((__, j) => (
-                <div key={j} className="border-2 border-zinc-800/60 rounded-md sm:rounded-xl bg-zinc-900/20 aspect-square w-full"></div>
+                <div key={j} className="border-2 border-zinc-700/60 rounded-md sm:rounded-xl bg-zinc-900/60 aspect-square w-full shadow-inner"></div>
               ))}
             </div>
              

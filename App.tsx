@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Settings, RefreshCw, Trophy, Globe, X, Radio, Link as LinkIcon, User, Layers, Users, LayoutGrid, AlertCircle, CheckCircle, KeyRound, Gift, Heart, Lock, Wifi, WifiOff, PlugZap, Move, ZoomIn, ZoomOut, Crown, Medal, Flame, Star } from 'lucide-react';
+import { Settings, RefreshCw, Trophy, Globe, X, Radio, Link as LinkIcon, User, Layers, Users, LayoutGrid, AlertCircle, CheckCircle, KeyRound, Gift, Heart, Lock, Wifi, WifiOff, PlugZap, Move, ZoomIn, ZoomOut, Crown, Medal, Flame, Star, Trash2, Video } from 'lucide-react';
 import { fetchDictionary, getRandomWord, isValidWord } from './services/wordService';
 import { tiktokService } from './services/tiktokConnector';
 import Grid from './components/Grid';
@@ -76,6 +76,14 @@ const RECONNECT_JOKES: Record<Language, string[]> = {
   ]
 };
 
+// Helper to load supporters synchronously for initial state
+const loadSupportersFromStorage = (): Record<string, SupporterStats> => {
+    try {
+        const saved = localStorage.getItem('wordle_supporters');
+        return saved ? JSON.parse(saved) : {};
+    } catch { return {}; }
+};
+
 const App: React.FC = () => {
   // Config State
   const [language, setLanguage] = useState<Language>('ID');
@@ -89,6 +97,11 @@ const App: React.FC = () => {
   const [restartCoinTarget, setRestartCoinTarget] = useState<number>(1); // Default 1 coin
   const [restartLikeTarget, setRestartLikeTarget] = useState<number>(100); // Default 100 likes
   
+  // Gift Video Settings
+  const [giftVideoUrl, setGiftVideoUrl] = useState<string>('https://assets.mixkit.co/videos/preview/mixkit-golden-particles-falling-on-a-black-background-3518-large.mp4');
+  const [showGiftVideo, setShowGiftVideo] = useState(false);
+  const giftVideoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const [showSettings, setShowSettings] = useState(false);
   const [showConnect, setShowConnect] = useState(false);
   
@@ -99,11 +112,13 @@ const App: React.FC = () => {
   const dragStartPos = useRef({ x: 0, y: 0 });
   const gridStartPos = useRef({ x: 0, y: 0 });
 
-  // Layout / Drag State for STATS WIDGET
-  const [statsPosition, setStatsPosition] = useState({ x: 20, y: 100 });
-  const [statsScale, setStatsScale] = useState(0.85);
-  const statsStartPos = useRef({ x: 0, y: 0 });
-  const isStatsDragging = useRef(false);
+  // Layout / Drag State for STATS WIDGETS
+  const [gifterPos, setGifterPos] = useState({ x: 20, y: 80 });
+  const [likerPos, setLikerPos] = useState({ x: 20, y: 140 });
+  const [widgetScale, setWidgetScale] = useState(0.85);
+
+  const dragWidgetRef = useRef<'gifter' | 'liker' | null>(null);
+  const widgetStartPosRef = useRef({ x: 0, y: 0 });
   
   // TikTok State
   const [tiktokUsername, setTiktokUsername] = useState('');
@@ -112,7 +127,6 @@ const App: React.FC = () => {
   const [isReconnecting, setIsReconnecting] = useState(false); 
   const [reconnectJoke, setReconnectJoke] = useState(''); // New State for funny message
   const [connectionStatus, setConnectionStatus] = useState<string>('Disconnected');
-  const [recentJoins, setRecentJoins] = useState<(TikTokMemberEvent & { id: number })[]>([]);
 
   // Data State
   const [dictionary, setDictionary] = useState<DictionaryData | null>(null);
@@ -131,17 +145,36 @@ const App: React.FC = () => {
   const [praise, setPraise] = useState<MessageData | null>(null);
   const [winner, setWinner] = useState<TikTokUserData | null>(null);
 
-  // Leaderboard & Ranking State
-  const [leaderboard, setLeaderboard] = useState<PlayerScore[]>([]);
-  const [hostScore, setHostScore] = useState(0);
+  // Leaderboard & Ranking State (Persisted)
+  const [leaderboard, setLeaderboard] = useState<PlayerScore[]>(() => {
+    try {
+      const saved = localStorage.getItem('wordle_leaderboard');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
+  
+  const [hostScore, setHostScore] = useState(() => {
+    try {
+      const saved = localStorage.getItem('wordle_hostScore');
+      return saved ? parseInt(saved, 10) : 0;
+    } catch { return 0; }
+  });
+  
   const [showLeaderboard, setShowLeaderboard] = useState(false);
 
-  // GLOBAL SUPPORTER STATS (Top Likers & Gifters)
-  const allSupportersRef = useRef<Record<string, SupporterStats>>({});
-  const [topLikers, setTopLikers] = useState<SupporterStats[]>([]);
-  const [topGifters, setTopGifters] = useState<SupporterStats[]>([]);
-  const [activeStatsTab, setActiveStatsTab] = useState<'likes'|'gifts'>('gifts');
-
+  // GLOBAL SUPPORTER STATS (Top Likers & Gifters) (Persisted)
+  const allSupportersRef = useRef<Record<string, SupporterStats>>(loadSupportersFromStorage());
+  
+  const [topLikers, setTopLikers] = useState<SupporterStats[]>(() => {
+     const all = Object.values(allSupportersRef.current) as SupporterStats[];
+     return all.filter(u => u.totalLikes > 0).sort((a, b) => b.totalLikes - a.totalLikes).slice(0, 5);
+  });
+  
+  const [topGifters, setTopGifters] = useState<SupporterStats[]>(() => {
+     const all = Object.values(allSupportersRef.current) as SupporterStats[];
+     return all.filter(u => u.totalCoins > 0).sort((a, b) => b.totalCoins - a.totalCoins).slice(0, 5);
+  });
+  
   // Restart Logic State
   const [isWaitingForRestart, setIsWaitingForRestart] = useState(false);
   const [showRestartOverlay, setShowRestartOverlay] = useState(false);
@@ -156,15 +189,15 @@ const App: React.FC = () => {
   const isProcessingRef = useRef(false);
   const ANIMATION_DELAY = 1500;
 
-  // Auto-switch stats tab
+  // Persist Leaderboard & Host Score
   useEffect(() => {
-    const interval = setInterval(() => {
-        if (!isDragMode) {
-            setActiveStatsTab(prev => prev === 'gifts' ? 'likes' : 'gifts');
-        }
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [isDragMode]);
+    localStorage.setItem('wordle_leaderboard', JSON.stringify(leaderboard));
+  }, [leaderboard]);
+
+  useEffect(() => {
+    localStorage.setItem('wordle_hostScore', hostScore.toString());
+  }, [hostScore]);
+
 
   const addToast = (msg: string, type: 'default' | 'error' | 'success' = 'default') => {
     const id = Date.now();
@@ -234,6 +267,9 @@ const App: React.FC = () => {
 
       allSupportersRef.current[user.userId] = currentStats;
 
+      // Save to localStorage
+      localStorage.setItem('wordle_supporters', JSON.stringify(allSupportersRef.current));
+
       // Recalculate Tops (throttled slightly in a real app, but direct here for simplicity)
       const allUsers = Object.values(allSupportersRef.current) as SupporterStats[];
       
@@ -252,6 +288,20 @@ const App: React.FC = () => {
              .slice(0, 5);
           setTopLikers(sortedLikers);
       }
+  };
+
+  const resetRankingData = () => {
+    if (confirm('Reset all ranking, host score, and supporter stats? This cannot be undone.')) {
+        setLeaderboard([]);
+        setHostScore(0);
+        allSupportersRef.current = {};
+        setTopLikers([]);
+        setTopGifters([]);
+        localStorage.removeItem('wordle_leaderboard');
+        localStorage.removeItem('wordle_hostScore');
+        localStorage.removeItem('wordle_supporters');
+        addToast('All ranking data reset!', 'success');
+    }
   };
 
   // --- GAME INITIALIZATION ---
@@ -275,7 +325,7 @@ const App: React.FC = () => {
     // Reset restart counters
     setIsWaitingForRestart(false);
     setCurrentRestartCoins(0);
-    setCurrentRestartLikes(0);
+    setCurrentRestartCoins(0);
     baselineLikeCountRef.current = null; // Reset baseline
 
     isProcessingRef.current = false;
@@ -487,16 +537,13 @@ const App: React.FC = () => {
       processQueue();
   };
 
-  const handleTikTokMember = (msg: TikTokMemberEvent) => {
-      const id = Date.now();
-      const newJoiner = { ...msg, id };
-      setRecentJoins(prev => {
-        const updated = [...prev, newJoiner];
-        return updated.length > 2 ? updated.slice(updated.length - 2) : updated;
-      });
-      setTimeout(() => {
-        setRecentJoins(prev => prev.filter(j => j.id !== id));
-      }, 4000);
+  const triggerGiftOverlay = () => {
+    setShowGiftVideo(true);
+    if (giftVideoTimerRef.current) clearTimeout(giftVideoTimerRef.current);
+    
+    giftVideoTimerRef.current = setTimeout(() => {
+       setShowGiftVideo(false);
+    }, 5000); // Play for 5 seconds
   };
 
   const handleTikTokGift = (msg: TikTokGiftEvent) => {
@@ -504,6 +551,11 @@ const App: React.FC = () => {
       // We ignore the 'repeatEnd' event to prevent double counting.
       if (msg.giftType === 1 && msg.repeatEnd) {
           return;
+      }
+
+      // Trigger Video Overlay
+      if (msg.diamondCount > 0 && giftVideoUrl) {
+          triggerGiftOverlay();
       }
 
       // Global Tracking
@@ -555,14 +607,12 @@ const App: React.FC = () => {
 
   // Store handlers in refs
   const handleTikTokGuessRef = useRef(handleTikTokGuess);
-  const handleTikTokMemberRef = useRef(handleTikTokMember);
   const handleTikTokGiftRef = useRef(handleTikTokGift);
   const handleTikTokLikeRef = useRef(handleTikTokLike);
 
   // Sync refs on render
   useEffect(() => {
     handleTikTokGuessRef.current = handleTikTokGuess;
-    handleTikTokMemberRef.current = handleTikTokMember;
     handleTikTokGiftRef.current = handleTikTokGift;
     handleTikTokLikeRef.current = handleTikTokLike;
   });
@@ -580,7 +630,6 @@ const App: React.FC = () => {
     tiktokService.connectToBackend();
 
     const onChat = (msg: TikTokChatEvent) => handleTikTokGuessRef.current(msg);
-    const onMember = (msg: TikTokMemberEvent) => handleTikTokMemberRef.current(msg);
     const onGift = (msg: TikTokGiftEvent) => handleTikTokGiftRef.current(msg);
     const onLike = (msg: TikTokLikeEvent) => handleTikTokLikeRef.current(msg);
 
@@ -616,7 +665,6 @@ const App: React.FC = () => {
     };
 
     tiktokService.onChat(onChat);
-    tiktokService.onMember(onMember);
     tiktokService.onGift(onGift);
     tiktokService.onLike(onLike);
     
@@ -636,7 +684,6 @@ const App: React.FC = () => {
 
     return () => {
       tiktokService.offChat(onChat);
-      tiktokService.offMember(onMember);
       tiktokService.offGift(onGift);
       tiktokService.offLike(onLike);
       tiktokService.disconnect();
@@ -687,36 +734,45 @@ const App: React.FC = () => {
     e.currentTarget.releasePointerCapture(e.pointerId);
   };
 
-  // --- DRAG / LAYOUT LOGIC STATS WIDGET ---
-  const handleStatsPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+  // --- DRAG / LAYOUT LOGIC STATS WIDGETS ---
+  const handleWidgetDown = (e: React.PointerEvent, type: 'gifter' | 'liker') => {
       if (!isDragMode) return;
       e.stopPropagation();
-      const target = e.currentTarget;
-      target.setPointerCapture(e.pointerId);
+      e.currentTarget.setPointerCapture(e.pointerId);
+      
       dragStartPos.current = { x: e.clientX, y: e.clientY };
-      statsStartPos.current = { x: statsPosition.x, y: statsPosition.y };
-      isStatsDragging.current = true;
+      
+      if (type === 'gifter') {
+          widgetStartPosRef.current = { ...gifterPos };
+          dragWidgetRef.current = 'gifter';
+      } else {
+          widgetStartPosRef.current = { ...likerPos };
+          dragWidgetRef.current = 'liker';
+      }
   };
 
-  const handleStatsPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-      if (!isDragMode || !isStatsDragging.current) return;
+  const handleWidgetMove = (e: React.PointerEvent) => {
+      if (!isDragMode || !dragWidgetRef.current) return;
       e.stopPropagation();
-      
+
       const dx = e.clientX - dragStartPos.current.x;
       const dy = e.clientY - dragStartPos.current.y;
-      
-      setStatsPosition({
-          x: statsStartPos.current.x + dx,
-          y: statsStartPos.current.y + dy
-      });
+
+      const newPos = {
+          x: widgetStartPosRef.current.x + dx,
+          y: widgetStartPosRef.current.y + dy
+      };
+
+      if (dragWidgetRef.current === 'gifter') setGifterPos(newPos);
+      else setLikerPos(newPos);
   };
 
-  const handleStatsPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+  const handleWidgetUp = (e: React.PointerEvent) => {
       if (!isDragMode) return;
       e.stopPropagation();
-      isStatsDragging.current = false;
+      dragWidgetRef.current = null;
       e.currentTarget.releasePointerCapture(e.pointerId);
-  };
+  }
 
 
   const letterOptions = Array.from({ length: 12 }, (_, i) => i + 4);
@@ -743,118 +799,113 @@ const App: React.FC = () => {
   return (
     <div className="flex flex-col h-full w-full bg-background relative overflow-hidden">
       
-      {/* FLOATING NOTIFICATIONS (JOIN) */}
-      <div className="absolute top-20 right-4 z-40 flex flex-col gap-2 pointer-events-none w-64 items-end">
-        {recentJoins.map((joiner) => (
-          <div key={joiner.id} className="animate-slide-in-right bg-white/10 backdrop-blur-md border border-white/20 p-3 rounded-xl shadow-2xl flex items-center gap-3 w-full">
-             <div className="relative">
-                <img src={joiner.profilePictureUrl} className="w-10 h-10 rounded-full border border-white/30" alt="pfp" />
-                <div className="absolute -bottom-1 -right-1 bg-green-500 w-3 h-3 rounded-full border-2 border-zinc-900"></div>
-             </div>
-             <div className="flex flex-col overflow-hidden">
-                <span className="text-white font-bold text-sm truncate">{joiner.nickname}</span>
-                <span className="text-emerald-300 text-xs font-medium uppercase tracking-wider">Welcome!</span>
-             </div>
-          </div>
-        ))}
-      </div>
+      {/* --- GIFT VIDEO OVERLAY --- */}
+      {showGiftVideo && giftVideoUrl && (
+         <div className="absolute inset-0 z-[45] pointer-events-none flex items-center justify-center overflow-hidden">
+             <video 
+                src={giftVideoUrl} 
+                autoPlay 
+                muted 
+                loop 
+                className="w-full h-full object-cover animate-fade-in mix-blend-screen opacity-90"
+             />
+         </div>
+      )}
 
-      {/* FLOATING STATS WIDGET (LIKERS & GIFTERS) */}
-      <div 
-        className={`absolute z-30 transition-transform duration-75 ${isDragMode ? 'cursor-move touch-none border-2 border-dashed border-indigo-500/50 rounded-2xl' : ''}`}
-        onPointerDown={handleStatsPointerDown}
-        onPointerMove={handleStatsPointerMove}
-        onPointerUp={handleStatsPointerUp}
-        onPointerCancel={handleStatsPointerUp}
+      {/* --- TOP GIFTERS HORIZONTAL BAR --- */}
+      <div
+        className={`absolute z-30 flex items-center gap-3 px-4 py-2 rounded-full bg-zinc-950/85 backdrop-blur-sm border border-amber-500/30 shadow-2xl select-none transition-transform duration-75 overflow-hidden ${isDragMode ? 'cursor-move touch-none border-2 border-dashed border-amber-500/80' : ''}`}
+        onPointerDown={(e) => handleWidgetDown(e, 'gifter')}
+        onPointerMove={handleWidgetMove}
+        onPointerUp={handleWidgetUp}
+        onPointerCancel={handleWidgetUp}
         style={{
-            transform: `translate(${statsPosition.x}px, ${statsPosition.y}px) scale(${statsScale})`,
-            width: '280px',
-            transformOrigin: 'top left'
+            transform: `translate(${gifterPos.x}px, ${gifterPos.y}px) scale(${widgetScale})`,
+            width: '320px',
+            transformOrigin: 'left center'
         }}
       >
-          {isDragMode && (
+         <div className="flex items-center gap-1.5 text-amber-300 font-black whitespace-nowrap border-r border-white/20 pr-3 mr-1 drop-shadow-md">
+             <Gift size={18} className="animate-bounce" />
+             <span className="text-xs uppercase tracking-wider">TOP GIFTERS</span>
+         </div>
+         
+         <div className="flex-1 overflow-hidden relative h-6 w-full mask-linear-fade">
+             <div className="flex gap-6 items-center absolute whitespace-nowrap animate-marquee">
+                 {/* Duplicate content for seamless loop */}
+                 {[...topGifters, ...topGifters].length > 0 ? (
+                     [...topGifters, ...topGifters].map((user, i) => (
+                         <div key={`${user.userId}-${i}`} className="flex items-center gap-2">
+                             <span className="text-amber-400 font-bold text-xs drop-shadow-sm">#{ (i % topGifters.length) + 1}</span>
+                             <img src={user.profilePictureUrl} className="w-5 h-5 rounded-full border border-zinc-600 shadow-sm" alt=""/>
+                             <span className="text-white text-xs font-bold drop-shadow-md">{user.nickname}</span>
+                             <span className="text-[10px] text-amber-300 font-bold drop-shadow-sm">({user.totalCoins})</span>
+                         </div>
+                     ))
+                 ) : (
+                     <span className="text-zinc-500 text-xs italic">Waiting for gifts... 🎁</span>
+                 )}
+             </div>
+         </div>
+
+         {/* Zoom Controls (Visible in Drag Mode) */}
+         {isDragMode && (
               <div 
                   onPointerDown={(e) => e.stopPropagation()} 
                   className="absolute -top-10 left-0 bg-zinc-900/90 text-white text-[10px] p-1 rounded-lg flex gap-2 pointer-events-auto z-50 shadow-lg"
               >
-                  <button onClick={() => setStatsScale(s => Math.max(0.5, s - 0.1))} className="p-1 hover:bg-zinc-700 rounded"><ZoomOut size={14}/></button>
-                  <span className="p-1 min-w-[30px] text-center">{Math.round(statsScale * 100)}%</span>
-                  <button onClick={() => setStatsScale(s => Math.min(1.5, s + 0.1))} className="p-1 hover:bg-zinc-700 rounded"><ZoomIn size={14}/></button>
+                  <button onClick={() => setWidgetScale(s => Math.max(0.5, s - 0.1))} className="p-1 hover:bg-zinc-700 rounded"><ZoomOut size={14}/></button>
+                  <span className="p-1 min-w-[30px] text-center">{Math.round(widgetScale * 100)}%</span>
+                  <button onClick={() => setWidgetScale(s => Math.min(1.5, s + 0.1))} className="p-1 hover:bg-zinc-700 rounded"><ZoomIn size={14}/></button>
               </div>
-          )}
+         )}
+      </div>
 
-          <div className="bg-black/30 backdrop-blur-sm border border-white/10 rounded-2xl overflow-hidden shadow-2xl flex flex-col w-full">
-             {/* Header / Tabs */}
-             <div className="flex border-b border-white/5">
-                 <button onClick={() => setActiveStatsTab('gifts')} className={`flex-1 py-2 flex items-center justify-center gap-1.5 transition-colors ${activeStatsTab === 'gifts' ? 'bg-amber-500/20 text-amber-400' : 'bg-transparent text-zinc-500 hover:text-zinc-300'}`}>
-                     <Gift size={16} className={activeStatsTab === 'gifts' ? 'animate-bounce' : ''} />
-                     <span className="text-xs font-black uppercase tracking-wider">Top Gifts</span>
-                 </button>
-                 <div className="w-[1px] bg-white/5"></div>
-                 <button onClick={() => setActiveStatsTab('likes')} className={`flex-1 py-2 flex items-center justify-center gap-1.5 transition-colors ${activeStatsTab === 'likes' ? 'bg-rose-500/20 text-rose-400' : 'bg-transparent text-zinc-500 hover:text-zinc-300'}`}>
-                     <Heart size={16} className={activeStatsTab === 'likes' ? 'animate-pulse' : ''} />
-                     <span className="text-xs font-black uppercase tracking-wider">Top Likes</span>
-                 </button>
-             </div>
-             
-             {/* Content List */}
-             <div className="p-3 min-h-[180px]">
-                 {activeStatsTab === 'gifts' ? (
-                     <div className="space-y-2 animate-fade-in">
-                        {topGifters.length === 0 ? (
-                            <div className="text-center py-8 text-zinc-500 text-xs italic">No gifts yet.<br/>Be the first! 🎁</div>
-                        ) : (
-                            topGifters.map((user, idx) => (
-                                <div key={user.userId} className="flex items-center gap-2 relative">
-                                    <div className={`w-5 h-5 flex items-center justify-center rounded text-[10px] font-bold ${idx===0 ? 'bg-yellow-400 text-black' : idx===1 ? 'bg-zinc-400 text-black' : idx===2 ? 'bg-orange-600 text-white' : 'bg-zinc-800 text-zinc-400'}`}>
-                                        {idx + 1}
-                                    </div>
-                                    <img src={user.profilePictureUrl} className="w-8 h-8 rounded-full border border-zinc-700" alt="" />
-                                    <div className="flex-1 min-w-0">
-                                        <div className="text-xs font-bold text-white truncate">{user.nickname}</div>
-                                        <div className="text-[10px] text-amber-400 font-medium flex items-center gap-1">
-                                            <Gift size={10} /> {user.totalCoins} Coins
-                                        </div>
-                                    </div>
-                                    {idx === 0 && <Crown size={14} className="text-yellow-400 absolute right-0 top-0 rotate-12" />}
-                                </div>
-                            ))
-                        )}
-                     </div>
+      {/* --- TOP LIKERS HORIZONTAL BAR --- */}
+      <div
+        className={`absolute z-30 flex items-center gap-3 px-4 py-2 rounded-full bg-zinc-950/85 backdrop-blur-sm border border-rose-500/30 shadow-2xl select-none transition-transform duration-75 overflow-hidden ${isDragMode ? 'cursor-move touch-none border-2 border-dashed border-rose-500/80' : ''}`}
+        onPointerDown={(e) => handleWidgetDown(e, 'liker')}
+        onPointerMove={handleWidgetMove}
+        onPointerUp={handleWidgetUp}
+        onPointerCancel={handleWidgetUp}
+        style={{
+            transform: `translate(${likerPos.x}px, ${likerPos.y}px) scale(${widgetScale})`,
+            width: '320px',
+            transformOrigin: 'left center'
+        }}
+      >
+         <div className="flex items-center gap-1.5 text-rose-300 font-black whitespace-nowrap border-r border-white/20 pr-3 mr-1 drop-shadow-md">
+             <Heart size={18} className="animate-pulse" />
+             <span className="text-xs uppercase tracking-wider">TOP LIKERS</span>
+         </div>
+         
+         <div className="flex-1 overflow-hidden relative h-6 w-full mask-linear-fade">
+             <div className="flex gap-6 items-center absolute whitespace-nowrap animate-marquee">
+                 {/* Duplicate content for seamless loop */}
+                 {[...topLikers, ...topLikers].length > 0 ? (
+                     [...topLikers, ...topLikers].map((user, i) => (
+                         <div key={`${user.userId}-${i}`} className="flex items-center gap-2">
+                             <span className="text-rose-400 font-bold text-xs drop-shadow-sm">#{ (i % topLikers.length) + 1}</span>
+                             <img src={user.profilePictureUrl} className="w-5 h-5 rounded-full border border-zinc-600 shadow-sm" alt=""/>
+                             <span className="text-white text-xs font-bold drop-shadow-md">{user.nickname}</span>
+                             <span className="text-[10px] text-rose-300 font-bold drop-shadow-sm">({user.totalLikes})</span>
+                         </div>
+                     ))
                  ) : (
-                     <div className="space-y-2 animate-fade-in">
-                        {topLikers.length === 0 ? (
-                            <div className="text-center py-8 text-zinc-500 text-xs italic">No likes yet.<br/>Tap tap tap! ❤️</div>
-                        ) : (
-                            topLikers.map((user, idx) => (
-                                <div key={user.userId} className="flex items-center gap-2 relative">
-                                    <div className={`w-5 h-5 flex items-center justify-center rounded text-[10px] font-bold ${idx===0 ? 'bg-rose-500 text-white' : 'bg-zinc-800 text-zinc-400'}`}>
-                                        {idx + 1}
-                                    </div>
-                                    <img src={user.profilePictureUrl} className="w-8 h-8 rounded-full border border-zinc-700" alt="" />
-                                    <div className="flex-1 min-w-0">
-                                        <div className="text-xs font-bold text-white truncate">{user.nickname}</div>
-                                        <div className="text-[10px] text-rose-400 font-medium flex items-center gap-1">
-                                            <Heart size={10} /> {user.totalLikes}
-                                        </div>
-                                    </div>
-                                    {idx === 0 && <Flame size={14} className="text-rose-500 absolute right-0 top-0" />}
-                                </div>
-                            ))
-                        )}
-                     </div>
+                     <span className="text-zinc-500 text-xs italic">Tap tap tap! ❤️</span>
                  )}
              </div>
-          </div>
+         </div>
       </div>
+
 
       {/* TOAST NOTIFICATIONS */}
       <div className="absolute top-28 left-1/2 transform -translate-x-1/2 z-50 flex flex-col items-center gap-2 w-full max-w-sm pointer-events-none">
         {toasts.map((toast) => (
-          <div key={toast.id} className={`px-6 py-3 rounded-full font-bold shadow-2xl backdrop-blur-md animate-pop flex items-center gap-2 border ${toast.type === 'error' ? 'bg-rose-500/90 text-white border-rose-400' : toast.type === 'success' ? 'bg-emerald-500/90 text-white border-emerald-400' : 'bg-zinc-800/90 text-white border-zinc-700'}`}>
+          <div key={toast.id} className={`px-6 py-3 rounded-full font-bold shadow-2xl backdrop-blur-md animate-pop flex items-center gap-2 border ${toast.type === 'error' ? 'bg-rose-600 text-white border-rose-400' : toast.type === 'success' ? 'bg-emerald-600 text-white border-emerald-400' : 'bg-zinc-800 text-white border-zinc-500'}`}>
             {toast.type === 'error' && <AlertCircle size={18} />}
             {toast.type === 'success' && <CheckCircle size={18} />}
-            <span className="text-sm tracking-wide text-center">{toast.message}</span>
+            <span className="text-sm tracking-wide text-center drop-shadow-md">{toast.message}</span>
           </div>
         ))}
       </div>
@@ -862,11 +913,11 @@ const App: React.FC = () => {
       {/* RECONNECTING OVERLAY (FUNNY) */}
       {isReconnecting && (
         <div className="absolute inset-0 z-[70] bg-amber-600/90 backdrop-blur-md flex flex-col items-center justify-center p-8 animate-fade-in text-center">
-            <WifiOff size={100} className="text-white mb-6 animate-shake" />
+            <WifiOff size={100} className="text-white mb-6 animate-shake drop-shadow-lg" />
             <h1 className="text-4xl sm:text-6xl font-black text-white uppercase tracking-tighter drop-shadow-xl mb-4 leading-tight">
               {reconnectJoke}
             </h1>
-            <div className="flex items-center gap-2 text-white/80 font-bold bg-black/20 px-4 py-2 rounded-full mt-4">
+            <div className="flex items-center gap-2 text-white/80 font-bold bg-black/40 px-4 py-2 rounded-full mt-4 border border-white/20">
                <div className="w-3 h-3 bg-white rounded-full animate-bounce"></div>
                <div className="w-3 h-3 bg-white rounded-full animate-bounce delay-100"></div>
                <div className="w-3 h-3 bg-white rounded-full animate-bounce delay-200"></div>
@@ -877,12 +928,12 @@ const App: React.FC = () => {
 
       {/* RESTART REQUIRED OVERLAY */}
       {showRestartOverlay && (
-        <div className="absolute inset-0 z-[55] flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in p-6">
-           <div className="bg-zinc-900/90 w-full max-w-md p-6 rounded-3xl border border-zinc-700 shadow-[0_0_50px_rgba(0,0,0,0.5)] flex flex-col items-center gap-6">
+        <div className="absolute inset-0 z-[55] flex flex-col items-center justify-center bg-zinc-950/90 backdrop-blur-sm animate-fade-in p-6">
+           <div className="bg-zinc-900 w-full max-w-md p-6 rounded-3xl border border-zinc-700 shadow-[0_0_50px_rgba(0,0,0,0.8)] flex flex-col items-center gap-6">
               
               <div className="flex items-center gap-2 text-rose-500 mb-2">
                  <Lock size={32} />
-                 <h2 className="text-2xl font-black uppercase tracking-widest text-white">Next Round Locked</h2>
+                 <h2 className="text-2xl font-black uppercase tracking-widest text-white drop-shadow-md">Next Round Locked</h2>
               </div>
               
               <div className="grid grid-cols-2 gap-4 w-full">
@@ -927,23 +978,23 @@ const App: React.FC = () => {
 
       {/* LEADERBOARD OVERLAY */}
       {showLeaderboard && (
-        <div className="absolute inset-0 z-[52] flex flex-col items-center justify-center pointer-events-none bg-black/60 backdrop-blur-md animate-fade-in p-4">
-           <div className="bg-zinc-900/90 w-full max-w-md rounded-3xl border border-yellow-500/20 shadow-2xl overflow-hidden flex flex-col max-h-[80vh] relative animate-slide-up">
+        <div className="absolute inset-0 z-[52] flex flex-col items-center justify-center pointer-events-none bg-zinc-950/80 backdrop-blur-md animate-fade-in p-4">
+           <div className="bg-zinc-900 w-full max-w-md rounded-3xl border border-yellow-500/20 shadow-2xl overflow-hidden flex flex-col max-h-[80vh] relative animate-slide-up">
               
               {/* Leaderboard Header */}
-              <div className="bg-gradient-to-r from-yellow-600/20 to-amber-600/20 p-5 border-b border-yellow-500/10 flex items-center justify-between">
+              <div className="bg-gradient-to-r from-yellow-600/30 to-amber-600/30 p-5 border-b border-yellow-500/10 flex items-center justify-between">
                  <div className="flex items-center gap-3">
                     <Trophy className="text-yellow-400 fill-yellow-400 animate-bounce" size={28} />
                     <div>
-                       <h2 className="text-xl font-black text-white uppercase tracking-wider">Top Players</h2>
-                       <p className="text-[10px] text-yellow-500/80 font-bold tracking-widest">SESSION RANKING</p>
+                       <h2 className="text-xl font-black text-white uppercase tracking-wider drop-shadow-md">Top Players</h2>
+                       <p className="text-[10px] text-yellow-400 font-bold tracking-widest drop-shadow-sm">SESSION RANKING</p>
                     </div>
                  </div>
                  
                  {/* Host Score */}
                  <div className="flex flex-col items-end">
                     <span className="text-[10px] text-zinc-400 font-bold uppercase">HOST SCORE</span>
-                    <span className="text-2xl font-black text-rose-500">{hostScore}</span>
+                    <span className="text-2xl font-black text-rose-500 drop-shadow-md">{hostScore}</span>
                  </div>
               </div>
 
@@ -953,29 +1004,29 @@ const App: React.FC = () => {
                     <div className="text-center py-10 text-zinc-500 italic">No winners yet! Be the first!</div>
                  ) : (
                     leaderboard.map((player, idx) => (
-                       <div key={player.userId} className={`flex items-center gap-3 p-3 rounded-xl border ${idx === 0 ? 'bg-gradient-to-r from-yellow-500/20 to-amber-500/10 border-yellow-500/50' : idx === 1 ? 'bg-zinc-800/60 border-zinc-400/30' : idx === 2 ? 'bg-orange-800/30 border-orange-700/30' : 'bg-zinc-800/30 border-transparent'} relative overflow-hidden`}>
+                       <div key={player.userId} className={`flex items-center gap-3 p-3 rounded-xl border ${idx === 0 ? 'bg-gradient-to-r from-yellow-500/30 to-amber-500/20 border-yellow-500/60' : idx === 1 ? 'bg-zinc-800 border-zinc-400/50' : idx === 2 ? 'bg-orange-900/40 border-orange-700/50' : 'bg-zinc-800/40 border-white/5'} relative overflow-hidden shadow-lg`}>
                           
                           {/* Rank Badge */}
                           <div className={`w-8 h-8 flex items-center justify-center rounded-lg font-black text-sm z-10 ${idx === 0 ? 'bg-yellow-400 text-black shadow-[0_0_10px_rgba(250,204,21,0.5)]' : idx === 1 ? 'bg-zinc-300 text-black' : idx === 2 ? 'bg-orange-600 text-white' : 'bg-zinc-700 text-zinc-400'}`}>
                              {idx + 1}
                           </div>
 
-                          <img src={player.profilePictureUrl} className="w-10 h-10 rounded-full border-2 border-zinc-700 object-cover z-10" alt="pfp" />
+                          <img src={player.profilePictureUrl} className="w-10 h-10 rounded-full border-2 border-zinc-600 object-cover z-10" alt="pfp" />
                           
                           <div className="flex-1 z-10 overflow-hidden">
-                             <div className="font-bold text-white truncate">{player.nickname}</div>
-                             <div className="text-[10px] text-zinc-400 flex items-center gap-1">
+                             <div className="font-bold text-white truncate drop-shadow-md">{player.nickname}</div>
+                             <div className="text-[10px] text-zinc-300 flex items-center gap-1 font-medium">
                                 <Crown size={10} className="text-yellow-500" /> {player.wins} Wins
                              </div>
                           </div>
 
                           <div className="z-10 text-right">
-                             <div className="text-lg font-black text-white">{player.score}</div>
+                             <div className="text-lg font-black text-white drop-shadow-md">{player.score}</div>
                              <div className="text-[9px] text-zinc-500 font-bold uppercase">PTS</div>
                           </div>
 
                           {/* Shine Effect for #1 */}
-                          {idx === 0 && <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent translate-x-[-100%] animate-[shimmer_2s_infinite]"></div>}
+                          {idx === 0 && <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent translate-x-[-100%] animate-[shimmer_2s_infinite]"></div>}
                        </div>
                     ))
                  )}
@@ -986,29 +1037,29 @@ const App: React.FC = () => {
 
       {/* PRAISE & WINNER OVERLAY */}
       {praise && !showRestartOverlay && !showLeaderboard && (
-         <div className="absolute inset-0 z-50 flex flex-col items-center justify-center pointer-events-none bg-black/60 backdrop-blur-[6px] animate-fade-in gap-6 p-4">
+         <div className="absolute inset-0 z-50 flex flex-col items-center justify-center pointer-events-none bg-black/70 backdrop-blur-[6px] animate-fade-in gap-6 p-4">
              {gameStatus === GameStatus.WON ? (
                 <>
-                  <div className="text-8xl mb-2 animate-bounce drop-shadow-xl">{praise.emoji}</div>
-                  <h1 className="text-5xl sm:text-7xl font-black text-transparent bg-clip-text bg-gradient-to-b from-yellow-300 to-amber-600 drop-shadow-[0_4px_10px_rgba(0,0,0,0.8)] animate-pop tracking-tighter text-center">{praise.text}</h1>
+                  <div className="text-8xl mb-2 animate-bounce drop-shadow-2xl">{praise.emoji}</div>
+                  <h1 className="text-5xl sm:text-7xl font-black text-transparent bg-clip-text bg-gradient-to-b from-yellow-300 to-amber-600 drop-shadow-[0_4px_4px_rgba(0,0,0,1)] animate-pop tracking-tighter text-center">{praise.text}</h1>
                   {winner && (
-                   <div className="flex flex-col items-center animate-slide-up bg-zinc-900/60 p-6 rounded-3xl border border-yellow-500/30 backdrop-blur-md shadow-[0_0_50px_rgba(234,179,8,0.2)]">
+                   <div className="flex flex-col items-center animate-slide-up bg-zinc-900/90 p-6 rounded-3xl border border-yellow-500/40 backdrop-blur-md shadow-[0_0_50px_rgba(234,179,8,0.3)]">
                       <div className="relative mb-3">
-                        <img src={winner.profilePictureUrl} alt={winner.nickname} className="w-24 h-24 rounded-full border-4 border-yellow-500 shadow-[0_0_25px_rgba(234,179,8,0.5)] object-cover" />
+                        <img src={winner.profilePictureUrl} alt={winner.nickname} className="w-24 h-24 rounded-full border-4 border-yellow-500 shadow-[0_0_25px_rgba(234,179,8,0.6)] object-cover" />
                         <Trophy className="absolute -bottom-2 -right-2 text-yellow-400 fill-yellow-400 drop-shadow-md" size={32} />
                       </div>
-                      <h2 className="text-2xl font-bold text-white text-center px-4">{winner.nickname}</h2>
-                      <p className="text-zinc-400 font-medium text-sm">@{winner.uniqueId}</p>
+                      <h2 className="text-2xl font-black text-white text-center px-4 drop-shadow-md">{winner.nickname}</h2>
+                      <p className="text-zinc-300 font-bold text-sm">@{winner.uniqueId}</p>
                    </div>
                   )}
                 </>
              ) : (
                 <>
-                  <div className="text-8xl mb-2 animate-bounce drop-shadow-xl">{praise.emoji}</div>
-                  <h1 className="text-4xl sm:text-6xl font-black text-transparent bg-clip-text bg-gradient-to-b from-rose-400 to-red-600 drop-shadow-[0_4px_10px_rgba(0,0,0,0.8)] animate-pop tracking-tighter text-center leading-tight">{praise.text}</h1>
-                  <div className="flex flex-col items-center animate-slide-up bg-zinc-900/60 p-6 rounded-3xl border border-rose-500/30 backdrop-blur-md shadow-[0_0_50px_rgba(244,63,94,0.2)] mt-4">
+                  <div className="text-8xl mb-2 animate-bounce drop-shadow-2xl">{praise.emoji}</div>
+                  <h1 className="text-4xl sm:text-6xl font-black text-transparent bg-clip-text bg-gradient-to-b from-rose-400 to-red-600 drop-shadow-[0_4px_4px_rgba(0,0,0,1)] animate-pop tracking-tighter text-center leading-tight">{praise.text}</h1>
+                  <div className="flex flex-col items-center animate-slide-up bg-zinc-900/90 p-6 rounded-3xl border border-rose-500/40 backdrop-blur-md shadow-[0_0_50px_rgba(244,63,94,0.3)] mt-4">
                       <span className="text-zinc-400 font-bold uppercase tracking-widest text-sm mb-2">JAWABANNYA ADALAH</span>
-                      <h2 className="text-5xl sm:text-6xl font-black text-white text-center tracking-widest drop-shadow-lg">{targetWord}</h2>
+                      <h2 className="text-5xl sm:text-6xl font-black text-white text-center tracking-widest drop-shadow-[0_2px_4px_rgba(0,0,0,1)]">{targetWord}</h2>
                    </div>
                 </>
              )}
@@ -1016,7 +1067,7 @@ const App: React.FC = () => {
       )}
 
       {/* HEADER */}
-      <header className="flex-none p-4 flex items-center justify-between bg-zinc-900/50 border-b border-white/5 backdrop-blur-md z-30">
+      <header className="flex-none p-4 flex items-center justify-between bg-zinc-950/80 border-b border-white/10 backdrop-blur-md z-30">
         <div className="flex items-center gap-3">
            <button onClick={() => setShowConnect(true)} className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold transition-all ${getBadgeStyle()}`}>
               <div className={`w-2 h-2 rounded-full ${getBadgeDot()}`} />
@@ -1032,7 +1083,7 @@ const App: React.FC = () => {
 
         <div className="flex items-center gap-2">
            {/* ZOOM CONTROLS */}
-           <div className="flex items-center bg-zinc-800 rounded-full p-1 mr-2">
+           <div className="flex items-center bg-zinc-800 rounded-full p-1 mr-2 border border-zinc-700">
               <button onClick={() => setScale(s => Math.max(0.5, s - 0.1))} className="p-1.5 rounded-full hover:bg-zinc-700 text-zinc-400 hover:text-white transition-colors">
                   <ZoomOut size={16} />
               </button>
@@ -1044,7 +1095,7 @@ const App: React.FC = () => {
 
            <button 
               onClick={() => setIsDragMode(!isDragMode)} 
-              className={`p-2 rounded-full transition-all ${isDragMode ? 'bg-indigo-500 text-white shadow-[0_0_15px_rgba(99,102,241,0.5)] animate-pulse' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white'}`}
+              className={`p-2 rounded-full transition-all ${isDragMode ? 'bg-indigo-600 text-white shadow-[0_0_15px_rgba(99,102,241,0.6)] animate-pulse' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white'}`}
               title={isDragMode ? "Lock Position" : "Adjust Layout"}
            >
              <Move size={20} />
@@ -1077,7 +1128,7 @@ const App: React.FC = () => {
           >
              {isDragMode && (
                <div className="absolute inset-4 border-2 border-dashed border-indigo-500/50 rounded-3xl z-0 flex items-center justify-center pointer-events-none">
-                  <span className="bg-zinc-900/80 px-4 py-2 rounded-lg text-indigo-400 font-bold backdrop-blur-md">
+                  <span className="bg-zinc-900/90 px-4 py-2 rounded-lg text-indigo-400 font-bold backdrop-blur-md shadow-lg">
                      DRAG TO ADJUST
                   </span>
                </div>
@@ -1089,8 +1140,8 @@ const App: React.FC = () => {
 
       {/* SETTINGS MODAL */}
       {showSettings && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
-          <div className="bg-zinc-900 w-full max-w-sm rounded-2xl border border-zinc-800 shadow-2xl overflow-hidden max-h-[85vh] flex flex-col">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm animate-fade-in">
+          <div className="bg-zinc-900 w-full max-w-sm rounded-2xl border border-zinc-700 shadow-2xl overflow-hidden max-h-[85vh] flex flex-col">
             <div className="p-4 border-b border-zinc-800 flex items-center justify-between bg-zinc-900/50 sticky top-0 z-10">
               <h2 className="text-lg font-bold flex items-center gap-2">
                 <Settings size={20} className="text-indigo-400" />
@@ -1165,15 +1216,35 @@ const App: React.FC = () => {
                               <span className="text-xs text-zinc-400">Total new likes to restart</span>
                           </div>
                       </div>
-                      <p className="text-[10px] text-zinc-500 italic">*Set both to 0 for instant auto-restart.</p>
+                  </div>
+              </div>
+              
+               {/* GIFT VIDEO SETTINGS */}
+              <div className="pt-4 border-t border-zinc-800">
+                  <h3 className="text-sm font-bold text-white mb-4">Overlay</h3>
+                  <div className="space-y-2">
+                      <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider flex items-center gap-2">
+                         <Video size={14} /> Gift Video URL
+                      </label>
+                      <input type="text" value={giftVideoUrl} onChange={(e) => setGiftVideoUrl(e.target.value)} placeholder="https://..." className="w-full bg-zinc-800/50 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-indigo-500 placeholder:text-zinc-600" />
+                      <p className="text-[10px] text-zinc-500 italic">Use a video with a BLACK background for transparency.</p>
                   </div>
               </div>
               
               {/* LAYOUT RESET */}
               <div className="pt-4 border-t border-zinc-800">
-                 <button onClick={() => { setGridPosition({x:0, y:0}); setScale(1); setStatsPosition({x:20, y:100}); setStatsScale(0.85); }} className="text-xs font-bold text-zinc-500 hover:text-white underline w-full text-center">
+                 <button onClick={() => { setGridPosition({x:0, y:0}); setScale(1); setGifterPos({x:20, y:80}); setLikerPos({x:20, y:140}); setWidgetScale(0.85); }} className="text-xs font-bold text-zinc-500 hover:text-white underline w-full text-center">
                     Reset Layout Position
                  </button>
+              </div>
+
+              {/* DATA RESET */}
+              <div className="pt-4 border-t border-zinc-800">
+                 <button onClick={resetRankingData} className="w-full py-2.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/20 rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-2">
+                    <Trash2 size={14} />
+                    Reset Ranking Data
+                 </button>
+                 <p className="text-[10px] text-zinc-500 text-center mt-1">Clears leaderboard, host score, and supporter stats.</p>
               </div>
 
             </div>
@@ -1189,8 +1260,8 @@ const App: React.FC = () => {
 
       {/* CONNECT MODAL */}
       {showConnect && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
-          <div className="bg-zinc-900 w-full max-w-sm rounded-2xl border border-zinc-800 shadow-2xl p-6">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm animate-fade-in">
+          <div className="bg-zinc-900 w-full max-w-sm rounded-2xl border border-zinc-700 shadow-2xl p-6">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-xl font-bold text-white flex items-center gap-2">
                 <LinkIcon size={24} className="text-emerald-500" />
