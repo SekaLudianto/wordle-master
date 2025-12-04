@@ -3,7 +3,7 @@ import { io } from 'socket.io-client';
 import { TikTokChatEvent, TikTokMemberEvent, TikTokGiftEvent, TikTokLikeEvent } from '../types';
 
 // Connects to the hosted Node.js server
-const BACKEND_URL = "ws://192.168.1.189:3000";
+const BACKEND_URL = "https://ini-live.up.railway.app";
 
 class TikTokConnector {
   // Use 'any' type for socket to prevent import issues with Socket type from CDN
