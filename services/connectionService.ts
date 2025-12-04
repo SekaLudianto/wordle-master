@@ -3,7 +3,7 @@ import { io, Socket } from 'socket.io-client';
 import { TikTokChatEvent, TikTokGiftEvent, TikTokLikeEvent } from '../types';
 
 // Endpoints
-const LIVE_CONNECTOR_URL = "https://buat-lev.up.railway.app";
+const LIVE_CONNECTOR_URL = "https://99a8876bbb7a.ngrok-free.app";
 const INDOFINITY_SOCKET_IO_URL = "http://192.168.1.189:62025";
 const INDOFINITY_WEBSOCKET_URL = "ws://192.168.1.189:62024";
 
