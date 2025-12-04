@@ -416,7 +416,6 @@ const App: React.FC = () => {
       <div className={`absolute z-30 flex items-center gap-3 px-4 py-2 rounded-full bg-zinc-950/85 backdrop-blur-sm border border-amber-500/30 shadow-2xl select-none transition-transform duration-75 overflow-hidden ${isDragMode ? 'cursor-move touch-none border-2 border-dashed border-amber-500/80' : ''}`} onPointerDown={(e) => handleWidgetDown(e, 'gifter')} onPointerMove={handleWidgetMove} onPointerUp={handleWidgetUp} onPointerCancel={handleWidgetUp} style={{ transform: `translate(${gifterPos.x}px, ${gifterPos.y}px) scale(${widgetScale})`, width: '320px', transformOrigin: 'left center' }}>
          <div className="flex items-center gap-1.5 text-amber-300 font-black whitespace-nowrap border-r border-white/20 pr-3 mr-1 drop-shadow-md"><Gift size={18} className="animate-bounce" /><span className="text-xs uppercase tracking-wider">TOP GIFTERS</span></div>
          <div className="flex-1 overflow-hidden relative h-6 w-full mask-linear-fade"><div className="flex gap-6 items-center absolute whitespace-nowrap animate-marquee">{[...topGifters, ...topGifters].length > 0 ? ([...topGifters, ...topGifters].map((user, i) => (<div key={`${user.userId}-${i}`} className="flex items-center gap-2"><span className="text-amber-400 font-bold text-xs drop-shadow-sm">#{ (i % topGifters.length) + 1}</span><img src={user.profilePictureUrl} className="w-5 h-5 rounded-full border border-zinc-600 shadow-sm" alt=""/><span className="text-white text-xs font-bold drop-shadow-md">{user.nickname}</span><span className="text-[10px] text-amber-300 font-bold drop-shadow-sm">({user.totalCoins})</span></div>))) : (<span className="text-zinc-500 text-xs italic">Waiting for gifts... 🎁</span>)}</div></div>
-         {isDragMode && <div onPointerDown={(e) => e.stopPropagation()} className="absolute -top-10 left-0 bg-zinc-900/90 text-white text-[10px] p-1 rounded-lg flex gap-2 pointer-events-auto z-50 shadow-lg"><button onClick={() => setWidgetScale(s => Math.max(0.5, s - 0.1))} className="p-1 hover:bg-zinc-700 rounded"><ZoomOut size={14}/></button><span className="p-1 min-w-[30px] text-center">{Math.round(widgetScale * 100)}%</span><button onClick={() => setWidgetScale(s => Math.min(1.5, s + 0.1))} className="p-1 hover:bg-zinc-700 rounded"><ZoomIn size={14}/></button></div>}
       </div>
 
       <div className={`absolute z-30 flex items-center gap-3 px-4 py-2 rounded-full bg-zinc-950/85 backdrop-blur-sm border border-rose-500/30 shadow-2xl select-none transition-transform duration-75 overflow-hidden ${isDragMode ? 'cursor-move touch-none border-2 border-dashed border-rose-500/80' : ''}`} onPointerDown={(e) => handleWidgetDown(e, 'liker')} onPointerMove={handleWidgetMove} onPointerUp={handleWidgetUp} onPointerCancel={handleWidgetUp} style={{ transform: `translate(${likerPos.x}px, ${likerPos.y}px) scale(${widgetScale})`, width: '320px', transformOrigin: 'left center' }}>
@@ -433,9 +432,22 @@ const App: React.FC = () => {
           <div className="flex flex-col"><h1 className="text-lg sm:text-2xl font-black tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-teal-400 drop-shadow-md">WORDLE LIVE</h1><span className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest">Interactive Game</span></div>
           <button onClick={() => setShowConnect(true)} className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] sm:text-xs font-bold tracking-wide transition-all shadow-md ${getBadgeStyle()}`}><div className={`w-2 h-2 rounded-full ${getBadgeDot()}`} />{getBadgeText()}</button>
         </div>
-        <div className="flex gap-2 items-center">
-            <div className="flex bg-zinc-800 rounded-lg p-1 border border-zinc-700"><button onClick={() => setScale(s => Math.max(0.5, s - 0.1))} className="p-1.5 hover:bg-zinc-700 rounded text-zinc-400 hover:text-white transition-colors"><ZoomOut size={16}/></button><span className="text-[10px] text-zinc-500 w-8 flex items-center justify-center font-mono">{Math.round(scale * 100)}%</span><button onClick={() => setScale(s => Math.min(1.5, s + 0.1))} className="p-1.5 hover:bg-zinc-700 rounded text-zinc-400 hover:text-white transition-colors"><ZoomIn size={16}/></button></div>
-            <button onClick={() => setIsDragMode(!isDragMode)} className={`p-2 rounded-lg transition-all ${isDragMode ? 'bg-indigo-600 text-white shadow-[0_0_15px_rgba(99,102,241,0.5)]' : 'text-zinc-400 hover:bg-zinc-800 hover:text-white'}`} title="Adjust Layout"><LayoutGrid size={20} /></button>
+        <div className="flex gap-2 items-center flex-wrap justify-end max-w-[50%] sm:max-w-none">
+            <div className="flex items-center bg-zinc-800 rounded-lg p-1 border border-zinc-700">
+                <span className="pl-2 pr-1 text-zinc-500"><LayoutGrid size={14} /></span>
+                <button onClick={() => setScale(s => Math.max(0.5, s - 0.1))} className="p-1.5 hover:bg-zinc-700 rounded text-zinc-400 hover:text-white transition-colors"><ZoomOut size={16}/></button>
+                <span className="text-[10px] text-zinc-500 w-8 hidden sm:flex items-center justify-center font-mono">{Math.round(scale * 100)}%</span>
+                <button onClick={() => setScale(s => Math.min(1.5, s + 0.1))} className="p-1.5 hover:bg-zinc-700 rounded text-zinc-400 hover:text-white transition-colors"><ZoomIn size={16}/></button>
+            </div>
+            {isDragMode && (
+              <div className="flex items-center bg-zinc-800 rounded-lg p-1 border border-zinc-700 animate-fade-in">
+                  <span className="pl-2 pr-1 text-zinc-500"><Users size={14} /></span>
+                  <button onClick={() => setWidgetScale(s => Math.max(0.5, s - 0.1))} className="p-1.5 hover:bg-zinc-700 rounded text-zinc-400 hover:text-white transition-colors"><ZoomOut size={16}/></button>
+                  <span className="text-[10px] text-zinc-500 w-8 hidden sm:flex items-center justify-center font-mono">{Math.round(widgetScale * 100)}%</span>
+                  <button onClick={() => setWidgetScale(s => Math.min(1.5, s + 0.1))} className="p-1.5 hover:bg-zinc-700 rounded text-zinc-400 hover:text-white transition-colors"><ZoomIn size={16}/></button>
+              </div>
+            )}
+            <button onClick={() => setIsDragMode(!isDragMode)} className={`p-2 rounded-lg transition-all ${isDragMode ? 'bg-indigo-600 text-white shadow-[0_0_15px_rgba(99,102,241,0.5)]' : 'text-zinc-400 hover:bg-zinc-800 hover:text-white'}`} title="Adjust Layout"><Move size={20} /></button>
             <button onClick={() => setShowSettings(true)} className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg transition-colors"><Settings size={20} /></button>
         </div>
       </header>
@@ -450,7 +462,7 @@ const App: React.FC = () => {
         {praise && !showLeaderboard && !showRestartOverlay && (
           <div
             className={`
-              absolute inset-0 z-20 flex flex-col items-center justify-center p-8 
+              absolute inset-0 z-20 flex flex-col items-center justify-center p-8 pb-48
               transition-opacity duration-300 pointer-events-none animate-fade-in
               ${gameStatus === GameStatus.WON 
                 ? 'bg-[radial-gradient(ellipse_at_center,rgba(16,185,129,0.25)_0%,rgba(9,9,11,0.9)_60%)]' 
