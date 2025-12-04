@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { GuessData, LetterStatus, TikTokUserData } from '../types';
+import { GuessData, LetterStatus, TikTokUserData, getRowStatuses } from '../types';
 import { User } from 'lucide-react';
 
 interface GridProps {
@@ -58,34 +58,6 @@ const Cell: React.FC<CellProps> = ({ char, status, animate, wordLength }) => {
       <span className="z-10 relative">{char}</span>
     </div>
   );
-};
-
-// Helper function for row statuses
-const getRowStatuses = (guess: string, target: string): LetterStatus[] => {
-  const length = guess.length;
-  const statuses: LetterStatus[] = Array(length).fill('absent');
-  const targetChars: (string | null)[] = target.split('');
-  const guessChars: (string | null)[] = guess.split('');
-
-  for (let i = 0; i < length; i++) {
-    if (guessChars[i] === targetChars[i]) {
-      statuses[i] = 'correct';
-      targetChars[i] = null;
-      guessChars[i] = null;
-    }
-  }
-
-  for (let i = 0; i < length; i++) {
-    if (guessChars[i] !== null) {
-      const index = targetChars.indexOf(guessChars[i]);
-      if (index !== -1) {
-        statuses[i] = 'present';
-        targetChars[index] = null;
-      }
-    }
-  }
-
-  return statuses;
 };
 
 // LEFT SIDE: Avatar Only

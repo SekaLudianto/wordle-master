@@ -93,3 +93,33 @@ export interface SupporterStats {
   totalLikes: number;
   totalCoins: number;
 }
+
+// Moved from Grid.tsx to be a shared utility for validation
+export const getRowStatuses = (guess: string, target: string): LetterStatus[] => {
+  const length = guess.length;
+  const statuses: LetterStatus[] = Array(length).fill('absent');
+  const targetChars: (string | null)[] = target.split('');
+  const guessChars: (string | null)[] = guess.split('');
+
+  // First pass for correct letters
+  for (let i = 0; i < length; i++) {
+    if (guessChars[i] === targetChars[i]) {
+      statuses[i] = 'correct';
+      targetChars[i] = null; // Mark as used
+      guessChars[i] = null;  // Mark as used
+    }
+  }
+
+  // Second pass for present letters
+  for (let i = 0; i < length; i++) {
+    if (guessChars[i] !== null) {
+      const index = targetChars.indexOf(guessChars[i]);
+      if (index !== -1) {
+        statuses[i] = 'present';
+        targetChars[index] = null; // Mark as used
+      }
+    }
+  }
+
+  return statuses;
+};
