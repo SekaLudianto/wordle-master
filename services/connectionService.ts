@@ -5,7 +5,7 @@ import { TikTokChatEvent, TikTokGiftEvent, TikTokLikeEvent } from '../types';
 // Endpoints
 const LIVE_CONNECTOR_URL = "https://buat-lev.up.railway.app";
 const INDOFINITY_SOCKET_IO_URL = "http://192.168.1.189:62025";
-const INDOFINITY_WEBSOCKET_URL = "ws://192.168.1.189:62024";
+const INDOFINITY_WEBSOCKET_URL = "ws://localhost:62024";
 
 type ConnectionMode = 'live-connector' | 'indofinity-socket.io' | 'indofinity-websocket' | 'none';
 type EventCallback = (...args: any[]) => void;
