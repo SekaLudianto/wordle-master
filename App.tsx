@@ -301,15 +301,47 @@ const App: React.FC = () => {
       if (isHardMode && guesses.length > 0) {
           const lastGuess = guesses[guesses.length - 1];
           const lastStatuses = getRowStatuses(lastGuess.word, targetWord);
+          
+          // Rule 1: Correct letters must be reused in the same spot.
           for (let i = 0; i < lastStatuses.length; i++) {
-              if (lastStatuses[i] === 'correct' && cleanGuess[i] !== lastGuess.word[i]) { addToast(`Wajib pakai '${lastGuess.word[i]}' di kotak ke-${i + 1}!`, 'error'); return; }
+              if (lastStatuses[i] === 'correct' && cleanGuess[i] !== lastGuess.word[i]) { 
+                  addToast(`Wajib pakai '${lastGuess.word[i]}' di kotak ke-${i + 1}!`, 'error'); 
+                  return; 
+              }
           }
+
+          // Rule 2: Present letters must be reused somewhere.
           const presentLetters = lastGuess.word.split('').filter((_, i) => lastStatuses[i] === 'present');
-          const remainingGuessLetters = cleanGuess.split('');
+          const remainingGuessLetters = [...cleanGuess]; // Create a mutable copy
           for (const letter of presentLetters) {
               const index = remainingGuessLetters.indexOf(letter);
-              if (index === -1) { addToast(`Harus ada huruf '${letter}'! ${HARD_MODE_MESSAGES[language][Math.floor(Math.random() * HARD_MODE_MESSAGES[language].length)]}`, 'error'); return; }
-              remainingGuessLetters.splice(index, 1);
+              if (index === -1) { 
+                  addToast(`Harus ada huruf '${letter}'! ${HARD_MODE_MESSAGES[language][Math.floor(Math.random() * HARD_MODE_MESSAGES[language].length)]}`, 'error'); 
+                  return; 
+              }
+              remainingGuessLetters.splice(index, 1); // Handle duplicates correctly
+          }
+          
+          // Rule 3: Truly absent letters (grey) cannot be reused.
+          const requiredLetters = new Set<string>();
+          const absentLetters = new Set<string>();
+
+          lastGuess.word.split('').forEach((char, i) => {
+              if (lastStatuses[i] === 'correct' || lastStatuses[i] === 'present') {
+                  requiredLetters.add(char);
+              } else if (lastStatuses[i] === 'absent') {
+                  absentLetters.add(char);
+              }
+          });
+
+          // A letter is forbidden if it appeared in the absent set but not in the required set.
+          for (const char of absentLetters) {
+              if (!requiredLetters.has(char)) {
+                  if (cleanGuess.includes(char)) {
+                      addToast(`Huruf '${char}' tidak boleh dipakai lagi!`, 'error');
+                      return;
+                  }
+              }
           }
       }
       guessQueueRef.current.push({ word: cleanGuess, user: { userId: msg.userId, uniqueId: msg.uniqueId, nickname: msg.nickname, profilePictureUrl: msg.profilePictureUrl } });
